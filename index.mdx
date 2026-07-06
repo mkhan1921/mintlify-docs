@@ -1,20 +1,81 @@
 ---
-title: "Introduction"
-description: "Welcome to your project"
+title: "TrustOS: Verifiable Credential Verification Platform"
+sidebarTitle: "Home"
+description: "TrustOS is a standards-based verification platform that lets you make trust decisions using cryptographically signed credentials — without ever storing sensitive data."
 ---
 
-Write a short description of your product here. What it does, who it's for, and what they can accomplish with it.
+TrustOS answers one question for your business: *can you trust this person, credential, or claim — under your policy, right now?* Whether you're a lender verifying income, an employer checking qualifications, or a government service confirming identity, TrustOS runs the same privacy-preserving verification pipeline with only the policy configuration changing between use cases.
 
-<Tip>
-  Ready to make this your own? Start by editing this page. Update your `docs.json` file to customize your site. Then fill out the [Quickstart](/quickstart) page.
-</Tip>
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Make your first verification call in minutes
+  </Card>
+  <Card title="Core Concepts" icon="book-open" href="/core-concepts">
+    Understand holders, verifiers, credentials, and the trust model
+  </Card>
+  <Card title="Verification Flow" icon="arrows-spin" href="/platform/verification-flow">
+    See the full end-to-end verification pipeline
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Explore every endpoint with request and response examples
+  </Card>
+</CardGroup>
 
-<Card title="Quickstart" icon="rocket" href="/quickstart">
-  This card links to the quickstart page in your project.
-</Card>
-<Card title="Components" icon="puzzle-piece" href="https://mintlify.com/docs/components">
-  Add cards, callouts, steps, tabs, and more to design and structure your pages.
-</Card>
-<Card title="Settings" icon="gear" href="https://mintlify.com/docs/organize/settings">
-  Set your site name, branding, and navigation in the `docs.json` file.
-</Card>
+## What TrustOS does
+
+TrustOS sits between parties that need to make a trust decision (verifiers) and parties that hold cryptographic proof of facts about themselves (holders). It validates credentials, checks revocation status, enforces your policy, runs optional confidential compute models, and returns a structured result — without retaining raw claim data.
+
+<CardGroup cols={3}>
+  <Card title="Verify Credentials" icon="shield-check">
+    OID4VP-based verification across QR, web, cross-device, and USSD channels
+  </Card>
+  <Card title="Configure Policies" icon="sliders">
+    Define exactly which credentials, assurance levels, and claims your use case requires
+  </Card>
+  <Card title="Protect Privacy" icon="lock">
+    Selective disclosure and confidential compute — raw claims never leave the holder's wallet
+  </Card>
+  <Card title="Trust Registry" icon="list-check">
+    Only issuers and verifiers approved by the governing authority can participate
+  </Card>
+  <Card title="Immutable Audit" icon="file-lines">
+    Every verification event is hash-chained and stored with 7-year retention
+  </Card>
+  <Card title="Any Industry" icon="building">
+    Lending, employment, insurance, transport, government — one platform, many policies
+  </Card>
+</CardGroup>
+
+## Get started in four steps
+
+<Steps>
+  <Step title="Register as a verifier">
+    Register your organization on the Trust Registry. You'll receive API credentials (mTLS certificate and OAuth client) to authenticate your requests.
+  </Step>
+  <Step title="Create a policy">
+    Define which credential types, assurance levels, and claims your verification flow requires. Call `POST /policies` or use the Marketplace to seed from a template.
+  </Step>
+  <Step title="Start a verification">
+    Call `POST /verifications` with your `policyId` and channel preference. TrustOS returns a presentation request your user completes in their wallet.
+  </Step>
+  <Step title="Receive the result">
+    Get `Approve`, `Decline`, or `Review` with risk and trust scores via webhook or polling. The result never contains raw credential data.
+  </Step>
+</Steps>
+
+## Explore by role
+
+<CardGroup cols={2}>
+  <Card title="Verifier Integration Guide" icon="building" href="/integration/verifier-integration">
+    Register, configure policies, and handle verification results
+  </Card>
+  <Card title="Issuer Integration Guide" icon="certificate" href="/integration/issuer-integration">
+    Issue conformant credentials and manage credential lifecycle
+  </Card>
+  <Card title="Wallet Overview" icon="wallet" href="/wallet/overview">
+    Understand how holders store and present credentials
+  </Card>
+  <Card title="Industry Use Cases" icon="briefcase" href="/integration/industries">
+    See how TrustOS applies to lending, employment, insurance, and more
+  </Card>
+</CardGroup>

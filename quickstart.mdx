@@ -1,47 +1,177 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with TrustOS Verification"
+sidebarTitle: "Quickstart"
+description: "Register as a verifier, create a policy, and make your first verification call — from zero to a live Approve/Decline result in five steps."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+This guide walks you through everything you need to make your first TrustOS verification request. By the end, you will have a working policy, a real QR-code presentation request, and a structured verification result returned to your application. The full flow takes about 15 minutes once your account is provisioned.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+
+  <Step title="Register as a Verifier">
+    Contact TrustOS to register your organisation on the Trust Registry. During onboarding you will prove ownership of your `did:web` identifier and receive two credentials for your integration:
+
+    - **mTLS client certificate** (`client.crt` / `client.key`) — required on every API call. The platform validates your certificate and refuses requests from unregistered clients before they reach the pipeline.
+    - **OAuth 2.0 client credentials** (`client_id` / `client_secret`) — scoped to your verifier DID and the specific API operations your account is approved for.
+
+    Store both securely. Your client certificate pins your identity in the Trust Registry; if it is revoked, all API calls will be rejected with `403 verifier-not-approved`.
+  </Step>
+
+  <Step title="Obtain an Access Token">
+    Exchange your client credentials for a short-lived bearer token at the token endpoint. Your mTLS certificate must be presented alongside the OAuth request.
 
     ```bash
-    npm install your-package
+    curl -X POST https://auth.trustos.example/oauth/token \
+      -H 'Content-Type: application/x-www-form-urlencoded' \
+      --cert client.crt --key client.key \
+      -d 'grant_type=client_credentials&scope=verifications:write'
     ```
+
+    A successful response looks like this:
+
+    ```json
+    {
+      "access_token": "eyJ...",
+      "token_type": "Bearer",
+      "expires_in": 3600
+    }
+    ```
+
+    Include the `access_token` value as a `Bearer` token in the `Authorization` header of every subsequent API call. Tokens expire after one hour; your integration should detect a `401` response and re-authenticate automatically.
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+
+  <Step title="Create a Policy">
+    A policy tells TrustOS what credentials to request, what assurance level they must meet, and how to translate the validation outcome into an `Approve`, `Decline`, or `Review` decision. Create your first policy with `POST /policies`.
 
     ```bash
-    your-cli init
+    curl -X POST https://api.trustos.example/v1/policies \
+      -H 'Authorization: Bearer eyJ...' \
+      -H 'Content-Type: application/json' \
+      --cert client.crt --key client.key \
+      -d '{
+        "name": "Identity Verification",
+        "requiredCredentials": [
+          {
+            "type": "Identity",
+            "minAssurance": 2,
+            "requiredClaims": ["fullName", "idNumber"]
+          }
+        ],
+        "decision": {
+          "onAllPass": "Approve",
+          "declineWhen": ["anyRevoked", "anyExpired", "policyUnmet"]
+        }
+      }'
     ```
+
+    The platform validates the policy shape, registers it as version 1, and returns its identifier:
+
+    ```json
+    {
+      "policyId": "pol_01J...",
+      "version": 1,
+      "name": "Identity Verification",
+      "createdAt": "2026-06-24T10:00:00Z"
+    }
+    ```
+
+    Save the `policyId` — you will pass it to every verification you start under this policy. Policies are immutable per version; when you update a policy, TrustOS creates a new version rather than changing the existing one, so in-flight verifications are never affected by a policy change.
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+
+  <Step title="Start a Verification">
+    With a policy in place, you can start a verification. `POST /verifications` returns immediately with a presentation channel that you display to the holder.
 
     ```bash
-    your-cli start
+    curl -X POST https://api.trustos.example/v1/verifications \
+      -H 'Authorization: Bearer eyJ...' \
+      -H 'Content-Type: application/json' \
+      --cert client.crt --key client.key \
+      -d '{
+        "policyId": "<your-policy-id>",
+        "holderRef": "usr_abc123",
+        "channel": "qr"
+      }'
     ```
+
+    The response is synchronous — you get the presentation channel back in milliseconds, before the holder has done anything:
+
+    ```json
+    {
+      "transactionId": "evt_01J...",
+      "status": "awaiting_presentation",
+      "presentation": {
+        "channel": "qr",
+        "requestUri": "https://api.trustos.example/oid4vp/evt_.../request",
+        "qr": "data:image/png;base64,...",
+        "expiresAt": "2026-06-24T10:05:00Z"
+      }
+    }
+    ```
+
+    Render the `qr` data URI as an `<img>` in your UI (or pass `channel: "direct_post"` for mobile deep-link flows). The holder opens their wallet, scans the QR code, reviews the exact claims your policy is requesting, and approves the presentation. Their wallet sends the cryptographic proof directly to TrustOS — your server never handles the credential data.
+
+    <Note>
+      The `holderRef` field is your stable, pseudonymous reference for this user in your system. TrustOS uses it to bind the presentation back to the correct verification session and returns a `proxy` identifier in the result that you can store for repeat interactions.
+    </Note>
   </Step>
+
+  <Step title="Receive the Result">
+    Once the holder has presented their credentials, TrustOS runs the full validation pipeline — proof verification, issuer trust check, revocation check, policy evaluation, and fraud-graph scoring — and produces a result. You can receive it via webhook (recommended) or by polling `GET /verifications/{id}`.
+
+    **Polling example:**
+
+    ```bash
+    curl https://api.trustos.example/v1/verifications/evt_01J... \
+      -H 'Authorization: Bearer eyJ...' \
+      --cert client.crt --key client.key
+    ```
+
+    A completed verification looks like this:
+
+    ```json
+    {
+      "transactionId": "evt_01J...",
+      "status": "completed",
+      "result": {
+        "outcome": "Approve",
+        "riskScore": 0.08,
+        "trustScore": 92,
+        "riskFlags": [],
+        "proxy": "px_9f3...",
+        "reasons": ["all required credentials valid and policy met"]
+      },
+      "completedAt": "2026-06-24T10:03:11Z"
+    }
+    ```
+
+    Use `outcome` to drive your application logic — continue an onboarding flow on `Approve`, block on `Decline`, or route to a manual review queue on `Review`. Store `proxy` if you want to recognise this holder in future sessions without any PII. The `riskScore` and `trustScore` are available for audit or reporting purposes.
+
+    <Note>
+      The result never contains raw credential data. Claim values such as `fullName` or `idNumber` are not present anywhere in the response — only the outcome, scores, flags, and proxy reach your application. This is enforced by the platform, not a configuration choice.
+    </Note>
+
+    <Tip>
+      For production integrations, register a webhook via `POST /webhooks` and pass `"callback": {"webhookId": "wh_..."}` in your verification request. TrustOS will POST the completed result to your endpoint the moment it is ready, signed for authenticity. This eliminates polling latency and avoids hitting your rate-limit quota on read operations.
+    </Tip>
+  </Step>
+
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## Next Steps
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
-</Tip>
+Now that you have a working integration, explore the rest of the documentation to build a production-ready verifier.
+
+<CardGroup cols={2}>
+  <Card title="Core Concepts" icon="book-open" href="/core-concepts">
+    Understand policies, assurance levels, the Trust Registry, and how the decision engine produces outcomes.
+  </Card>
+  <Card title="Verifier Integration Guide" icon="plug" href="/integration/verifier-integration">
+    Detailed guidance on webhooks, idempotency, error handling, and the sandbox environment.
+  </Card>
+  <Card title="Policy Engine" icon="sliders" href="/platform/policy-engine">
+    Full reference for every field in a policy definition, including sharing templates and compute manifests.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/overview">
+    OpenAPI reference for every endpoint, including request schemas, response shapes, and error codes.
+  </Card>
+</CardGroup>

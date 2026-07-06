@@ -1,0 +1,151 @@
+---
+title: "Discover Credential Types in the TrustOS Marketplace"
+sidebarTitle: "Marketplace"
+description: "Browse and adopt credential types and compute templates from the TrustOS Marketplace to configure policies without writing schemas from scratch."
+---
+
+The TrustOS Marketplace is a discoverable catalogue of credential types and compute templates. As a verifier, you browse it to find the credential types you need and configure your policies — with an option to generate a draft policy directly from a Marketplace entry in a single click. As an issuer, you publish your credential schemas and templates to the Marketplace so verifiers can adopt them without any manual integration work. The Marketplace stores descriptors and pointers — schema URLs, issuer DIDs, trust registry status, compute manifest references — never credentials, claims, or model binaries.
+
+## What the Marketplace Contains
+
+Every entry in the Marketplace is one of two kinds.
+
+<CardGroup cols={2}>
+  <Card title="Credential Type Entries" icon="id-card">
+    Describe a verifiable credential: its schema and context URLs, the issuer's DID and trust registry status, the minimum assurance level, supported cryptographic suites, what each claim field proves, and the revocation endpoint.
+  </Card>
+  <Card title="Compute Template Entries" icon="calculator">
+    Describe a reusable compute manifest: its purpose, required input fields, output schema, the registered manifest it points to, and the publisher's DID. Compute templates let you add scoring or income-band logic to your policy without writing a model yourself.
+  </Card>
+</CardGroup>
+
+## Credential Type Entry
+
+A credential type entry gives you everything you need to evaluate whether a credential type is appropriate for your use case and to configure a policy around it.
+
+```json
+{
+  "kind": "credentialType",
+  "type": "Employment",
+  "schemaUrl": "https://trustos.example/schemas/employment/v1.json",
+  "issuerDid": "did:web:payrollco.example",
+  "trustRegistryStatus": "approved",
+  "issuerTrustScore": 91,
+  "minAssurance": 2,
+  "supportedSuites": ["ecdsa-sd-2023", "eddsa-rdfc-2022"],
+  "claims": [
+    { "path": "activeStatus", "proves": "currently employed" },
+    { "path": "payrollVerifiedFlag", "proves": "income source payroll-verified" }
+  ],
+  "revocationEndpoint": "https://payrollco.example/status/"
+}
+```
+
+<Note>
+  The `trustRegistryStatus` and `issuerTrustScore` fields are live projections from the Trust Registry — not values set by the issuer. The Marketplace displays trust status but is never the source of truth for it. If an issuer's trust score drops, the change is reflected in their Marketplace entry automatically.
+</Note>
+
+## Compute Template Entry
+
+A compute template entry describes a reusable scoring or income-banding computation that you can attach to a policy as a Confidential Compute manifest.
+
+```json
+{
+  "kind": "computeTemplate",
+  "templateId": "tmpl_income_band",
+  "purpose": "Map verified employment and bank standing to an income band",
+  "inputs": ["Employment.payrollVerifiedFlag", "BankKey.accountStanding"],
+  "outputSchema": { "band": "enum[low,medium,high]" },
+  "publisherDid": "did:web:scoringco.example"
+}
+```
+
+The `outputSchema` tells you exactly what your verification result's `computeOut` field will contain when this template is active. See [Confidential Compute](/advanced/confidential-compute) for details on attaching a compute manifest to a policy.
+
+## Browsing the Marketplace
+
+Query the Marketplace API with filters to find entries relevant to your use case.
+
+<Tabs>
+  <Tab title="Browse credential types">
+    ```bash
+    curl 'https://api.trustos.example/v1/marketplace?kind=credentialType&type=Employment' \
+      -H 'Authorization: Bearer $TOKEN'
+    ```
+  </Tab>
+  <Tab title="Browse compute templates">
+    ```bash
+    curl 'https://api.trustos.example/v1/marketplace?kind=computeTemplate' \
+      -H 'Authorization: Bearer $TOKEN'
+    ```
+  </Tab>
+  <Tab title="Filter by assurance level">
+    ```bash
+    curl 'https://api.trustos.example/v1/marketplace?kind=credentialType&minAssurance=2' \
+      -H 'Authorization: Bearer $TOKEN'
+    ```
+  </Tab>
+</Tabs>
+
+You can also browse and filter entries visually in the TrustOS console.
+
+## Seeding a Policy from a Marketplace Entry
+
+The fastest way to configure a new verification policy is to start from a Marketplace entry rather than authoring a policy JSON from scratch.
+
+<Steps>
+  <Step title="Browse and select a credential type">
+    Search the Marketplace for the credential type that matches your use case. Review the `claims` array to confirm the fields you need are available, and check the `issuerTrustScore` and `trustRegistryStatus` to confirm the issuer meets your requirements.
+  </Step>
+  <Step title="Generate a draft policy">
+    In the console, click **Configure policy from this entry**. This pre-populates a draft policy with the credential `type`, `schemaUrl`, `minAssurance`, and supported suites from the Marketplace entry. Via the API, call `POST /policies` with those fields from the entry:
+
+    ```bash
+    curl -X POST 'https://api.trustos.example/v1/policies' \
+      -H 'Authorization: Bearer $TOKEN' \
+      -H 'Content-Type: application/json' \
+      -d '{
+        "credentialRequirements": [
+          {
+            "type": "Employment",
+            "schemaUrl": "https://trustos.example/schemas/employment/v1.json",
+            "minAssurance": 2
+          }
+        ]
+      }'
+    ```
+  </Step>
+  <Step title="Adjust claims and requirements">
+    Edit the draft policy to mark which claim fields are `required` versus `optional` for your specific use case, and set your `minAssurance` if it differs from the Marketplace default.
+  </Step>
+  <Step title="Publish the policy">
+    Call `PUT /policies/{policyId}/publish` or click **Publish** in the console. The policy becomes active and can be referenced in verification requests immediately.
+  </Step>
+</Steps>
+
+## Publishing to the Marketplace (for Issuers)
+
+If you are an issuer, publishing your credential type to the Marketplace makes it discoverable and adoptable by any verifier on the platform — with no code deployment required.
+
+<Steps>
+  <Step title="Register your schema and context URL">
+    Submit your credential schema JSON and JSON-LD context to the TrustOS schema registry and obtain the hosted `schemaUrl` and `contextUrl`.
+  </Step>
+  <Step title="Link your revocation endpoint">
+    Provide the URL of your status list endpoint. TrustOS will poll this endpoint during verifications to check revocation status in real time.
+  </Step>
+  <Step title="Declare supported suites and assurance level">
+    Specify which cryptographic suites your issued credentials support (for example `ecdsa-sd-2023` or `eddsa-rdfc-2022`) and the minimum assurance level they satisfy.
+  </Step>
+  <Step title="Optionally publish sharing or scoring templates">
+    If you want to offer pre-built compute templates — income banding, risk scoring, or field-mapping logic — publish them as compute template entries alongside your credential type. Verifiers can attach them to policies directly from the Marketplace.
+  </Step>
+</Steps>
+
+<Warning>
+  Publishing to the Marketplace requires approved-issuer status on the TrustOS platform. Contact your scheme administrator to initiate the issuer approval process.
+</Warning>
+
+<Tip>
+  Adding a new industry or credential type to TrustOS requires only publishing a schema and authoring a policy — no code deployment, no platform changes, and no waiting for a release cycle. New credential types enter the system as data and are immediately discoverable by verifiers.
+</Tip>

@@ -1,0 +1,171 @@
+---
+title: "Authenticate with the TrustOS API"
+sidebarTitle: "Authentication"
+description: "Set up mTLS client certificates and OAuth 2.0 bearer tokens to make authenticated calls to the TrustOS REST API from your server."
+---
+
+TrustOS uses two-layer authentication: an mTLS client certificate issued at verifier registration, combined with an OAuth 2.0 bearer token obtained via the client credentials flow. Both layers must be present on every request to the API. The certificate binds the request to your registered verifier identity, and the bearer token scopes the request to specific API permissions.
+
+## Steps to authenticate
+
+<Steps>
+
+### Install your mTLS certificate
+
+Your client certificate (`client.crt`) and private key (`client.key`) are issued when your verifier registration is approved by TrustOS. Store them securely on your server — for example in a secrets manager or a locked-down filesystem path — and never commit them to source control.
+
+<Warning>
+  Never expose your client secret or private key in client-side code, browser bundles, or mobile apps. All TrustOS API calls must originate from your server.
+</Warning>
+
+### Obtain a bearer token
+
+Exchange your client credentials for an access token by calling the token endpoint. Include your mTLS certificate on this request as well.
+
+<CodeGroup>
+```bash cURL
+curl -X POST https://auth.trustos.example/oauth/token \
+  --cert client.crt --key client.key \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  -d 'grant_type=client_credentials&client_id=YOUR_CLIENT_ID&client_secret=YOUR_CLIENT_SECRET&scope=verifications:write policies:write'
+```
+
+```typescript TypeScript
+const response = await fetch('https://auth.trustos.example/oauth/token', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  body: new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: process.env.TRUSTOS_CLIENT_ID!,
+    client_secret: process.env.TRUSTOS_CLIENT_SECRET!,
+    scope: 'verifications:write verifications:read',
+  }),
+});
+const { access_token, expires_in } = await response.json();
+```
+</CodeGroup>
+
+A successful response contains your access token and its lifetime:
+
+```json
+{
+  "access_token": "eyJhbGciOiJSUzI1NiJ9...",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "scope": "verifications:write policies:write"
+}
+```
+
+Tokens expire after **1 hour**. Request a new token before the current one expires to avoid interruption.
+
+<Tip>
+  Cache your access token and schedule a refresh before it expires — for example, at 55 minutes after issue. Making a new token request for every API call adds unnecessary latency. Most OAuth 2.0 client libraries handle token caching and proactive refresh automatically.
+</Tip>
+
+### Make authenticated requests
+
+Include both your mTLS certificate (`--cert` / `--key`) and the bearer token (`Authorization: Bearer`) on every API request.
+
+```bash
+curl -X POST https://api.trustos.example/v1/verifications \
+  --cert client.crt --key client.key \
+  -H 'Authorization: Bearer eyJhbGciOiJSUzI1NiJ9...' \
+  -H 'Content-Type: application/json' \
+  -d '{"policyId": "pol_01J...", "channel": "qr"}'
+```
+
+</Steps>
+
+## Available scopes
+
+Request only the scopes your integration needs. Scopes are space-separated in the `scope` parameter of the token request.
+
+| Scope | Access granted |
+| :--- | :--- |
+| `verifications:write` | Start verification events |
+| `verifications:read` | Read verification results |
+| `policies:write` | Create and update policies |
+| `policies:read` | Read policies and version history |
+| `compute-manifests:write` | Register compute manifests |
+| `webhooks:write` | Manage webhook endpoints |
+| `audit:read` | Query audit events |
+
+## Authentication errors
+
+| HTTP status | Error type | Meaning | How to fix |
+| :--- | :--- | :--- | :--- |
+| `401` | `unauthenticated` | Missing or invalid mTLS cert, or expired / invalid bearer token | Verify your certificate path and that it matches the registered verifier; request a new token if it has expired |
+| `403` | `verifier-not-approved` | Your verifier DID is not listed as approved in the Trust Registry | Contact TrustOS support to complete your verifier registration |
+
+All error bodies follow [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) `problem+json` and include a `traceId` for support escalation.
+
+## TypeScript client example
+
+The example below shows a reusable client that fetches and caches a token, then makes authenticated calls.
+
+```typescript
+interface TokenCache {
+  accessToken: string;
+  expiresAt: number;
+}
+
+let tokenCache: TokenCache | null = null;
+
+async function getAccessToken(clientId: string, clientSecret: string): Promise<string> {
+  // Return the cached token if it has more than 60 seconds remaining.
+  if (tokenCache && tokenCache.expiresAt - Date.now() > 60_000) {
+    return tokenCache.accessToken;
+  }
+
+  const response = await fetch('https://auth.trustos.example/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: clientId,
+      client_secret: clientSecret,
+      scope: 'verifications:write verifications:read',
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Token request failed: ${response.status}`);
+  }
+
+  const data = await response.json();
+
+  tokenCache = {
+    accessToken: data.access_token,
+    // expires_in is in seconds; convert to an absolute timestamp in ms.
+    expiresAt: Date.now() + data.expires_in * 1000,
+  };
+
+  return tokenCache.accessToken;
+}
+
+async function callApi(path: string, token: string, body?: object): Promise<Response> {
+  return fetch(`https://api.trustos.example/v1${path}`, {
+    method: body ? 'POST' : 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
+// Usage
+const token = await getAccessToken(
+  process.env.TRUSTOS_CLIENT_ID!,
+  process.env.TRUSTOS_CLIENT_SECRET!,
+);
+
+const response = await callApi('/verifications', token, {
+  policyId: 'pol_01J...',
+  channel: 'qr',
+});
+```
+
+<Note>
+  The TypeScript example omits mTLS configuration because Node.js `fetch` does not natively support client certificates. In production, configure mTLS at your HTTP client or proxy layer — for example, pass an `https.Agent` with `cert` and `key` options when using the `node-fetch` or `undici` libraries, or handle certificate attachment at your infrastructure layer (load balancer, service mesh).
+</Note>

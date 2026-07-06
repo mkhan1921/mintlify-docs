@@ -1,0 +1,214 @@
+---
+title: "Integrate TrustOS as a Credential Issuer"
+sidebarTitle: "Issuer Guide"
+description: "Register as an approved issuer, publish your DID document and revocation list, issue credentials via OID4VCI, and manage the full credential lifecycle."
+---
+
+This guide covers everything you need to issue verifiable credentials that TrustOS can verify. You will register as an approved issuer, set up your credential infrastructure, issue credentials via OID4VCI, and manage the credential lifecycle — from first issuance through to revocation. Credentials you issue become part of the trust ecosystem: verifiers can request them by type, and your issuer trust score reflects the quality and compliance of your issuance history.
+
+## Integration Steps
+
+<Steps>
+
+  <Step title="Register as an Approved Issuer">
+    Contact the Trust Registry operator to begin issuer onboarding. Registration is a formal process — the Trust Registry only accepts issuers who have passed an audit and whose credentials meet the scheme's quality bar. During onboarding you will:
+
+    - Prove control of your `did:web` DID
+    - Pass an onboarding audit covering your credential issuance processes and data handling practices
+    - Receive an **initial trust score** that reflects your compliance standing at the time of registration
+
+    Your trust score is visible to verifiers and schemes. A higher score means your credentials carry more weight; a falling score can cause credentials you issue to be declined by schemes that enforce a minimum trust threshold.
+  </Step>
+
+  <Step title="Publish Your DID Document">
+    Your DID document is the public record of your organization's cryptographic identity. Host it at `https://yourdomain.example/.well-known/did.json` so that the TrustOS verification pipeline can resolve and verify it during every credential check.
+
+    ```json
+    {
+      "@context": ["https://www.w3.org/ns/did/v1"],
+      "id": "did:web:yourdomain.example",
+      "verificationMethod": [
+        {
+          "id": "did:web:yourdomain.example#key-1",
+          "type": "JsonWebKey2020",
+          "controller": "did:web:yourdomain.example",
+          "publicKeyJwk": {
+            "kty": "EC",
+            "crv": "P-256",
+            "x": "...",
+            "y": "..."
+          }
+        }
+      ],
+      "assertionMethod": ["did:web:yourdomain.example#key-1"]
+    }
+    ```
+
+    The `assertionMethod` array must reference the key you use to sign credentials. The endpoint must be publicly accessible over HTTPS with a valid TLS certificate, and must return `Content-Type: application/json`.
+
+    <Tip>
+      Keep your DID document URL stable. Changing it after credentials have been issued breaks verification for all existing credentials that reference it.
+    </Tip>
+  </Step>
+
+  <Step title="Publish a Bitstring Status List">
+    Every credential you issue must reference a revocation status entry. You publish a **Bitstring Status List** — a W3C standard revocation list — at a stable public URL. TrustOS fetches this list during every verification to check whether a specific credential has been revoked.
+
+    Host your status list credential as a static JSON file, for example at `https://yourdomain.example/status/1`. Each issued credential will reference a specific `statusListIndex` (a bit position) within this list.
+
+    ```json
+    {
+      "@context": [
+        "https://www.w3.org/2018/credentials/v1",
+        "https://w3id.org/vc/status-list/2021/v1"
+      ],
+      "id": "https://yourdomain.example/status/1",
+      "type": ["VerifiableCredential", "BitstringStatusListCredential"],
+      "issuer": "did:web:yourdomain.example",
+      "credentialSubject": {
+        "id": "https://yourdomain.example/status/1#list",
+        "type": "BitstringStatusList",
+        "statusPurpose": "revocation",
+        "encodedList": "H4sIAAAAAAAAA..."
+      }
+    }
+    ```
+
+    Sign this status list credential with the same key you use for regular credential issuance. TrustOS verifies the issuer signature on the status list before trusting its contents — an unsigned or mis-signed list causes credentials to be declined.
+
+    <Note>
+      TrustOS caches status lists. The freshness of revocation checks is determined by the smaller of your HTTP `Cache-Control` max-age and the scheme's configured freshness requirement. For high-assurance schemes, set a short `Cache-Control` and update the list promptly when revoking credentials.
+    </Note>
+  </Step>
+
+  <Step title="Issue Credentials via OID4VCI">
+    TrustOS uses the **OpenID for Verifiable Credential Issuance (OID4VCI)** protocol. To issue a credential to a holder, create a credential offer. The holder's wallet app accepts the offer and stores the issued credential.
+
+    ```bash
+    curl -X POST https://issuer.trustos.example/v1/offers \
+      -H "Authorization: Bearer $ISSUER_ADMIN_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "credentialType": "Employment",
+        "holderDid": "did:jwk:eyJ..."
+      }'
+    ```
+
+    The response contains an offer URI you deliver to the holder — via QR code, deep link, or push notification depending on your channel.
+
+    Each credential you issue must include a `credentialStatus` entry pointing at the status list you published in Step 3:
+
+    ```json
+    {
+      "credentialStatus": {
+        "type": "BitstringStatusListEntry",
+        "statusPurpose": "revocation",
+        "statusListIndex": "94567",
+        "statusListCredential": "https://yourdomain.example/status/1"
+      }
+    }
+    ```
+
+    Assign each credential a unique `statusListIndex`. Track the mapping between credentials and their index positions in your own datastore.
+  </Step>
+
+  <Step title="Use an Approved Cryptographic Suite">
+    TrustOS schemes maintain an **allowed-suites list**. Your credentials must be signed using a suite on that list. For Phase 1, the approved suites are:
+
+    | Suite | Algorithm | Use Case |
+    | --- | --- | --- |
+    | `JsonWebSignature2020` | ECDSA P-256 | General-purpose W3C VCs |
+    | `Ed25519Signature2020` | EdDSA Ed25519 | Lightweight W3C VCs |
+    | `vc+sd-jwt` | SD-JWT VC | Selective disclosure credentials |
+
+    <Warning>
+      Credentials signed with a suite not on the scheme's allowed-suites list will be declined at pipeline step 4, even if the credential is otherwise valid. Check the scheme's current allowed list before rotating to a new cryptographic suite.
+    </Warning>
+
+    Hold your signing key exclusively in a hardware security module (HSM) or equivalent key management service. Private key material must never enter application memory or be stored in your database.
+  </Step>
+
+  <Step title="Manage Credential Lifecycle">
+    After issuance, you are responsible for keeping credential status current. TrustOS checks the status bit on every verification event.
+
+    **To revoke a credential:** flip the bit at the credential's `statusListIndex` from `0` to `1` in your status list, then republish the updated status list credential to the same URL. TrustOS will see the revocation at the next verification (bounded by the cache TTL).
+
+    **To suspend a credential:** use `statusPurpose: "suspension"` in your status list. A suspended credential can be reinstated by flipping the bit back to `0`.
+
+    <Tabs>
+      <Tab title="Revoke">
+        ```python
+        # Decompress your current status list, flip the bit, recompress and re-sign
+        status_list = load_status_list("https://yourdomain.example/status/1")
+        status_list.revoke(index=94567)
+        publish_status_list(status_list)  # re-sign and upload to the same URL
+        ```
+      </Tab>
+      <Tab title="Reinstate (Suspension Only)">
+        ```python
+        status_list = load_status_list("https://yourdomain.example/status/1")
+        status_list.reinstate(index=94567)
+        publish_status_list(status_list)
+        ```
+      </Tab>
+    </Tabs>
+
+    <Note>
+      Revocation is **not instant** — it is bounded by the cache TTL of your status list. For time-sensitive revocations (such as a fraud incident), set a short `Cache-Control` on your status list endpoint and republish immediately.
+    </Note>
+  </Step>
+
+  <Step title="Publish Your Credential Types to the Marketplace">
+    Make your credential types discoverable to verifiers by publishing them to the TrustOS Marketplace. This allows verifiers to include your credential types in their policies and gives them access to your schema definitions.
+
+    Submit the following for each credential type:
+
+    - **Schema URL** — the JSON Schema that defines the credential's shape
+    - **Context URL** — the JSON-LD context file
+    - **Claim descriptions** — human-readable descriptions of each claim
+    - **Sharing templates** — pre-built templates that suggest which claims a verifier typically needs
+
+    Once published, verifiers can browse your credential type in the Marketplace and reference it directly in their policies.
+  </Step>
+
+</Steps>
+
+## Maintaining Your Trust Score
+
+<Accordion title="What affects your trust score">
+  Your issuer trust score is computed by the Trust Registry authority based on observable signals. A higher score increases the confidence verifiers and schemes place in credentials you issue.
+
+  Factors that **raise** your score:
+  - Clean audit history with no compliance findings
+  - Current and complete compliance certifications
+  - No reported incidents (fraud, misissuance, or data breaches)
+  - Prompt revocation of compromised or invalid credentials
+
+  Factors that **lower** your score:
+  - Outstanding audit findings or lapsed certifications
+  - Reported incidents, even if resolved
+  - Slow revocation response times
+  - Credentials that fail verification at unusually high rates
+
+  A dropping trust score can cause schemes that enforce a minimum threshold to reject credentials you issue, even if those credentials are technically valid. Monitor your score and address any findings promptly.
+</Accordion>
+
+## Key Rotation
+
+When you rotate your signing key, follow this sequence to avoid disrupting verification for credentials already in circulation:
+
+<Steps>
+  <Step title="Publish the new key">
+    Add a new `verificationMethod` entry to your DID document at `/.well-known/did.json`. Assign it a new key ID (for example, `#key-2`). Update `assertionMethod` to reference the new key ID for future issuance.
+  </Step>
+  <Step title="Keep the old key in verify-only mode">
+    **Do not remove** the old `verificationMethod` entry. Credentials already signed with the old key must still be verifiable. Retain it until all credentials signed with that key have either expired or been revoked.
+  </Step>
+  <Step title="Sign new credentials with the new key">
+    Once the DID document update is live, issue all new credentials using the new key. Old credentials continue to verify against the old key entry.
+  </Step>
+</Steps>
+
+<Warning>
+  Removing an old signing key from your DID document before all dependent credentials have expired will cause those credentials to fail verification. Treat key retirement as a long-running process, not an immediate cutover.
+</Warning>

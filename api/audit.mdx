@@ -1,0 +1,137 @@
+---
+title: "Audit API: Query Verification Event History"
+sidebarTitle: "Audit"
+description: "Query the immutable, verifier-scoped audit log for verification outcomes, consent changes, and policy updates with cursor-based pagination."
+---
+
+The Audit API gives you a queryable projection of the immutable audit log scoped to your verifier. Every verification outcome, consent grant or revocation, policy creation, and policy update generates an audit event. You can use this API to build compliance reports, investigate unusual patterns, and answer questions such as "who requested what, when, and why" — the core accountability questions required by data-protection regulations.
+
+The audit log is append-only and backed by WORM object storage with a default 7-year retention period. The records returned by this API are a fast queryable projection; the underlying immutable stream is always the authoritative source of truth. All events contain claim names and pseudonymous identifiers — raw claim values are never logged anywhere in the platform.
+
+---
+
+## GET /audit
+
+List audit events for your verifier, ordered by timestamp descending. Supports cursor-based pagination and filtering by time range and event type.
+
+### Query parameters
+
+<ParamField query="cursor" type="string">
+  Opaque pagination cursor from the previous response's `nextCursor` field. Omit to start from the most recent events.
+</ParamField>
+
+<ParamField query="limit" type="integer">
+  Maximum number of events to return per page. Defaults to `50`, capped at `500`.
+</ParamField>
+
+<ParamField query="from" type="string">
+  ISO-8601 timestamp. Return only events at or after this time.
+</ParamField>
+
+<ParamField query="to" type="string">
+  ISO-8601 timestamp. Return only events strictly before this time.
+</ParamField>
+
+<ParamField query="eventType" type="string">
+  Filter to a single event type. See the event types table below.
+</ParamField>
+
+### Example request
+
+```bash
+curl "https://api.trustos.example/v1/audit?limit=10&from=2026-06-01T00:00:00Z&eventType=verification_completed" \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+### Response — 200 OK
+
+```json
+{
+  "events": [
+    {
+      "eventId": "aud_01J...",
+      "type": "verification_completed",
+      "verifierDid": "did:web:lender.example",
+      "policyId": "pol_01J...",
+      "outcome": "Approve",
+      "proxy": "px_9f3...",
+      "riskScore": 0.12,
+      "trustScore": 88,
+      "timestamp": "2026-06-24T10:03:11Z"
+    }
+  ],
+  "nextCursor": "cursor_abc...",
+  "hasMore": true
+}
+```
+
+<ResponseField name="events" type="array">
+  The list of audit events matching the query, ordered by `timestamp` descending.
+
+  <Expandable title="event fields">
+    <ResponseField name="eventId" type="string">
+      Unique identifier for this audit event.
+    </ResponseField>
+    <ResponseField name="type" type="string">
+      The event type. See the event types table below.
+    </ResponseField>
+    <ResponseField name="verifierDid" type="string">
+      The DID of the verifier associated with this event.
+    </ResponseField>
+    <ResponseField name="policyId" type="string">
+      The ID of the policy active at the time of the event. Present on verification and policy events.
+    </ResponseField>
+    <ResponseField name="outcome" type="string">
+      The verification decision: `Approve`, `Decline`, or `Review`. Present on `verification_completed` events only.
+    </ResponseField>
+    <ResponseField name="proxy" type="string">
+      A pseudonymous, stable identifier for the holder involved in the event. Use this to correlate events for the same holder without storing PII.
+    </ResponseField>
+    <ResponseField name="riskScore" type="number">
+      Risk score between `0.0` and `1.0`. Present on `verification_completed` events.
+    </ResponseField>
+    <ResponseField name="trustScore" type="number">
+      Trust score between `0` and `100`. Present on `verification_completed` events.
+    </ResponseField>
+    <ResponseField name="timestamp" type="string">
+      ISO-8601 timestamp of when the event was appended to the audit log.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="nextCursor" type="string | null">
+  Opaque cursor to retrieve the next page of results. `null` when you have reached the end of the log for the given filter.
+</ResponseField>
+
+<ResponseField name="hasMore" type="boolean">
+  `true` if there are additional events beyond the current page.
+</ResponseField>
+
+### Event types
+
+| `type` | When it is emitted |
+|---|---|
+| `verification_completed` | A verification event reached a terminal state (`Approve`, `Decline`, or `Review`). |
+| `consent_granted` | A holder granted standing consent to your verifier DID. |
+| `consent_revoked` | A holder revoked a standing consent record previously granted to your verifier DID. |
+| `policy_created` | A new policy was created under your verifier, producing version 1. |
+| `policy_updated` | An existing policy was updated, producing a new immutable version. |
+
+<Note>
+  Audit events record claim names and pseudonymous identifiers, never raw claim values. The `proxy` field is a stable pseudonymous identifier that lets you correlate repeat verifications for the same holder without ever receiving or storing PII.
+</Note>
+
+<Tip>
+  Use the `from` and `to` parameters together to export fixed time windows for compliance reporting. Combine with `eventType=verification_completed` to get a complete record of all decisions in a period.
+</Tip>
+
+---
+
+## Error responses
+
+| HTTP | `type` | When |
+|---|---|---|
+| 400 | `invalid-request` | Invalid timestamp format, unsupported `eventType`, or `from` is after `to` |
+| 401 | `unauthenticated` | Missing or invalid bearer token |
+| 403 | `verifier-not-approved` | Verifier not approved in the Trust Registry |
+| 429 | `rate-limited` | Query quota exceeded |

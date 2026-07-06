@@ -1,0 +1,192 @@
+---
+title: "TrustOS Use Cases Across Industries"
+sidebarTitle: "Industries"
+description: "How Credit, Lending, Property, Employment, Transport, Insurance, Government, and Telecoms verticals map to TrustOS credential types and policies."
+---
+
+TrustOS runs the same verification pipeline across every industry — only the policy changes. Whether you are a mortgage lender, an HR platform, or a government licensing portal, you configure a policy that specifies the credential types you need, the assurance levels you require, and the decision logic you want applied. The underlying infrastructure is identical across every vertical. This page shows how each industry maps to credential types, verification decisions, and optional compute or monitoring configurations.
+
+Adding a new industry use case requires authoring a policy and, optionally, publishing credential types to the Marketplace. No code deployment is needed.
+
+<Tip>
+  Use the Marketplace (`GET /marketplace`) to browse credential types for your industry. You can seed a draft policy directly from a Marketplace entry — select a credential type and click **Use in Policy** to get a pre-populated `requiredCredentials` block.
+</Tip>
+
+## Industries and Use Cases
+
+<Accordion title="Credit & Lending">
+  **Segments:** Banks, non-bank and micro lenders, payroll lenders, retail credit, BNPL providers, credit brokers
+
+  Credit and lending is the primary use case for TrustOS Confidential Compute. Your proprietary affordability or credit scoring model runs inside an attested enclave — TrustOS passes the verified credential claims into your model and returns only the output band, without your model logic or raw claims ever leaving the enclave.
+
+  | | Detail |
+  | --- | --- |
+  | **Credentials Required** | Identity (assurance 3), Employment/income (assurance 2), BankKey or PEMKey for bank standing (assurance 2), TaxKey, fraud score signal |
+  | **Decision** | Credit decision: `Approve`, `Decline`, or `Review` |
+  | **Compute** | Yes — proprietary affordability or credit model via Confidential Compute |
+  | **Monitoring** | — |
+
+  **Example policy snippet:**
+
+  ```json
+  {
+    "name": "Personal Loan Affordability",
+    "requiredCredentials": [
+      { "type": "Identity",    "minAssurance": 3, "requiredClaims": ["fullName", "idNumber"] },
+      { "type": "Employment",  "minAssurance": 2, "requiredClaims": ["activeStatus", "payrollVerifiedFlag"] },
+      { "type": "BankKey",     "minAssurance": 2, "requiredClaims": ["accountStanding"] }
+    ],
+    "computeManifest": "mft_lender_affordability_v2",
+    "decision": {
+      "onAllPass": "Approve",
+      "reviewWhen": ["fraudScore>0.6"],
+      "declineWhen": ["anyRevoked", "anyExpired", "policyUnmet"]
+    }
+  }
+  ```
+</Accordion>
+
+<Accordion title="Vehicle & Asset Finance">
+  **Segments:** Vehicle and asset finance providers, dealerships, asset marketplaces, fleet operators, rental companies
+
+  Vehicle finance verifications combine identity and financial standing checks with vehicle-specific credentials — encumbrance status (is the vehicle already financed?) and roadworthiness. Fleet operators can add monitoring subscriptions to receive automatic alerts when a driver's licence is approaching expiry or a medical fitness certificate needs renewal.
+
+  | | Detail |
+  | --- | --- |
+  | **Credentials Required** | Identity, Driver Licence, PrDP (Professional Driving Permit, where applicable), Employment, BankKey, Vehicle (encumbrance status, roadworthy certificate) |
+  | **Decision** | Approve finance application or rental agreement |
+  | **Compute** | Optional — pricing model |
+  | **Monitoring** | Driver Licence expiry, Medical Fitness certificate expiry (fleet drivers) |
+
+  For fleet use cases, add a monitoring subscription after the initial hire verification. TrustOS will alert you if any of a driver's credentials are revoked or approach expiry between their regular check-ins.
+</Accordion>
+
+<Accordion title="Property & Housing">
+  **Segments:** Mortgage lenders, landlords, letting agents, rental and student accommodation providers, commercial property, body corporates, property management firms
+
+  Property and housing verifications confirm the identity and financial standing of applicants — income verification, bank standing, and tax compliance. The Property credential covers title deeds and encumbrance status, letting landlords confirm ownership and any registered mortgage before finalizing a lease or transfer.
+
+  | | Detail |
+  | --- | --- |
+  | **Credentials Required** | Identity, Employment or income credential, BankKey, TaxKey, Property (title, encumbrance) |
+  | **Decision** | Approve tenancy application, mortgage, or property access |
+  | **Compute** | Optional |
+  | **Monitoring** | Lease status changes, rates or municipal arrears |
+
+  Body corporates and property managers can use monitoring to receive alerts when a tenant's employment status changes or when rates arrears are registered against a unit owner.
+</Accordion>
+
+<Accordion title="Employment & Workforce">
+  **Segments:** Recruiters, HR departments, staffing agencies, gig platforms, labour brokers, security companies, physical site entry systems
+
+  Employment and workforce verifications handle a wide range of credential types — from right-to-work documents to trade certifications, induction records, and medical fitness certificates. Physical site access use cases can drive turnstile or gate systems directly from the verification outcome.
+
+  | | Detail |
+  | --- | --- |
+  | **Credentials Required** | Identity, Right-to-Work, academic qualifications, trade or induction certificates, Medical Fitness certificate |
+  | **Decision** | Hire decision, onboarding approval, or site access grant |
+  | **Compute** | Optional — hiring algorithm |
+  | **Monitoring** | Certificate expiry alerts, right-to-work status changes |
+
+  Monitoring subscriptions are especially valuable for workforce compliance — a lapsed right-to-work or expired trade certificate can trigger an automatic alert before it becomes a regulatory issue.
+</Accordion>
+
+<Accordion title="Transport & Logistics">
+  **Segments:** Fleet operators, logistics providers, border control agencies
+
+  Transport and logistics verifications are credential-heavy by nature. A single dispatch check may require validating a driver's licence, Professional Driving Permit, medical fitness, Hazchem certification (for dangerous goods), induction records, and vehicle compliance — all in a single verification event. Monitoring ensures that any expiry across the full credential set is flagged automatically.
+
+  | | Detail |
+  | --- | --- |
+  | **Credentials Required** | Driver Licence, PrDP, Medical Fitness, Hazchem certification, Induction certificate, Cross-Border Permit (international routes), Vehicle credential |
+  | **Decision** | Dispatch approval, facility access, or border crossing clearance |
+  | **Compute** | — |
+  | **Monitoring** | Any expiry across the full credential set |
+
+  Border control use cases can use the same pipeline, with the Cross-Border Permit and Vehicle credentials added to the `requiredCredentials` block.
+</Accordion>
+
+<Accordion title="Insurance">
+  **Segments:** Insurers, brokers, underwriters, funeral cover providers, medical schemes
+
+  Insurance verifications support the full policy lifecycle — underwriting, premium-setting, and claims processing. Proprietary underwriting models run via Confidential Compute, receiving verified identity, health, employment, and vehicle data without the platform storing raw claims or your model logic.
+
+  | | Detail |
+  | --- | --- |
+  | **Credentials Required** | Identity, Medical Fitness, Employment, Vehicle credential, fraud score signal |
+  | **Decision** | Bind policy, set premium band, or approve claim payment |
+  | **Compute** | Yes — proprietary underwriting model |
+  | **Monitoring** | — |
+
+  Medical schemes can add monitoring subscriptions to receive alerts when a member's employment status changes — for example, to trigger a mid-year review of income-based contribution tiers.
+</Accordion>
+
+<Accordion title="Financial Services & Wealth">
+  **Segments:** Financial advisors, asset and wealth managers, investment platforms, stockbrokers, FICA compliance teams
+
+  Financial services onboarding and FICA (Financial Intelligence Centre Act) compliance checks require strong identity, tax reference, and authority verification. The Director/Authority credential confirms that an individual is authorized to act on behalf of a legal entity — essential for onboarding corporate clients.
+
+  | | Detail |
+  | --- | --- |
+  | **Credentials Required** | Identity, TaxKey (tax reference), Bank credential, Director/Authority credential |
+  | **Decision** | Onboard client, approve transaction, or confirm FICA compliance |
+  | **Compute** | Optional |
+  | **Monitoring** | — |
+
+  For platforms that onboard both individual and corporate clients, author separate policies for each profile — the individual policy references Identity and TaxKey; the corporate policy adds Director/Authority.
+</Accordion>
+
+<Accordion title="Legal & Fiduciary">
+  **Segments:** Law firms, conveyancers, estate planners, trust administrators, commissioners of oaths
+
+  Legal and fiduciary verifications confirm that a person has the authority to execute a document or register a transaction on behalf of another party. The right-to-act scope in the Director/Authority credential limits what a verified individual can actually do — a conveyancer can verify that a signatory is authorized for a specific transaction type.
+
+  | | Detail |
+  | --- | --- |
+  | **Credentials Required** | Identity, Director/Authority credential (with right-to-act scope), TaxKey |
+  | **Decision** | Authorize document execution or register a transaction |
+  | **Compute** | — |
+  | **Monitoring** | Authority revocation alerts |
+
+  Monitoring is particularly valuable here — a power of attorney or company authority can be revoked at any time. A monitoring subscription means you are notified immediately if an authority credential is revoked after an initial approval.
+</Accordion>
+
+<Accordion title="Government & Public Services">
+  **Segments:** Municipalities, grant administrators, licensing authorities, public housing programs, citizen-facing portals
+
+  Government verifications span a wide range of decisions — grant eligibility, licence applications, public housing allocation, and permit issuance. TrustOS supports the **USSD channel** for government use cases, enabling low-connectivity applicants to complete a verification flow from a basic handset without a smartphone or internet connection.
+
+  | | Detail |
+  | --- | --- |
+  | **Credentials Required** | Identity, TaxKey, Employment credential, Property credential |
+  | **Decision** | Grant approval, licence issuance, housing allocation, or permit authorization |
+  | **Compute** | Optional — rule engine for eligibility scoring |
+  | **Monitoring** | — |
+
+  To enable USSD for an applicant, pass their MSISDN in the `subjectHint` field when starting a verification:
+
+  ```json
+  {
+    "policyId": "pol_01J...",
+    "channel": "ussd",
+    "subjectHint": { "msisdn": "+27820000000" }
+  }
+  ```
+
+  The platform routes a USSD prompt to the applicant's handset. No smartphone or wallet app is required.
+</Accordion>
+
+<Accordion title="Telecoms & Connectivity">
+  **Segments:** Mobile network operators, ISPs, MVNOs, device finance providers
+
+  Telecoms verifications address SIM registration, device finance, and contract onboarding. The SIM-swap signal is a unique input in this vertical — a recent SIM swap on a MSISDN is a strong fraud signal, and TrustOS surfaces it as part of the fraud score alongside standard identity and bank-standing checks.
+
+  | | Detail |
+  | --- | --- |
+  | **Credentials Required** | Identity, BankKey, fraud score signal, SIM-swap signal |
+  | **Decision** | Approve SIM registration, device finance application, or new contract |
+  | **Compute** | Optional |
+  | **Monitoring** | SIM-swap signal (ongoing fraud monitoring) |
+
+  Add a monitoring subscription post-onboarding to receive alerts if a SIM-swap is detected on a customer's MSISDN after their initial contract verification — useful for detecting account takeover attempts.
+</Accordion>

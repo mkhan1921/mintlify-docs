@@ -1,0 +1,80 @@
+---
+title: "TrustOS: Verifiable Credential Verification Platform"
+sidebarTitle: "Introduction"
+description: "TrustOS lets you verify credentials and make trust decisions without ever handling raw personal data — only structured outcomes reach your application."
+---
+
+TrustOS is a standards-based verification platform that answers one question with a structured, auditable result: can you trust this person, business, or credential — right now, under your policy? As a verifier, you integrate once against the TrustOS API, define policies that describe what you need to know, and receive clean `Approve`, `Decline`, or `Review` decisions along with a risk score and trust score. Raw credential claims never leave the holder's wallet and are never stored or forwarded — your application sees only the outcome.
+
+## How It Works
+
+When you start a verification, TrustOS generates a presentation request and delivers it to the holder's wallet via a QR code, deep link, or USSD prompt. The holder reviews exactly which claims are being requested, consents, and sends a cryptographic proof back to TrustOS. TrustOS validates the proof against the issuer's signature, checks the issuer's registration and trust score, confirms the credential hasn't been revoked, evaluates your policy, and runs any fraud-graph signals — then returns a single structured result to you. The whole validate-and-decide pipeline runs in memory; when the event completes, the raw claims are discarded.
+
+## The Three Actors
+
+Every verification involves three parties working together.
+
+| Actor | Role |
+|---|---|
+| **Holder** | The person or entity who owns credentials in a digital wallet. The holder controls exactly what is shared and must consent to each verification request before any data leaves their device. |
+| **Issuer** | An authority — a bank, employer, regulator, or government agency — that signs and issues credentials to holders. Only issuers registered in the Trust Registry can participate. |
+| **Verifier** | You. Your organization calls the TrustOS API to request a verification, define the policy it must satisfy, and receive the structured decision. |
+
+## The Verification Result
+
+Every completed verification returns one of three outcomes along with supporting scores and signals.
+
+| Field | Description |
+|---|---|
+| `outcome` | `Approve`, `Decline`, or `Review` — the decision your policy produced. |
+| `riskScore` | A float from `0.0` (no risk signals) to `1.0` (high risk) drawn from the fraud graph and validation pipeline. |
+| `trustScore` | An integer from `0` to `100` reflecting how strongly you can trust the issuer and the credential chain. |
+| `riskFlags` | A list of named signals that contributed to the risk score, such as known fraud patterns or anomalous presentation behavior. |
+| `proxy` | A pseudonymous, stable identifier for the holder within your scheme — lets you recognise a returning user across sessions without storing any PII. |
+| `reasons` | Human-readable explanation of the decision, suitable for case review. |
+
+## Industries and Use Cases
+
+TrustOS is built to be policy-driven, so the same verification pipeline serves many sectors — only the policy configuration changes.
+
+<CardGroup cols={2}>
+  <Card title="Lending & Finance" icon="building-columns">
+    Verify income, employment status, and identity for loan origination or account opening — without handling payslips or ID documents.
+  </Card>
+  <Card title="Employment & HR" icon="briefcase">
+    Confirm qualifications, right-to-work status, and professional licences before onboarding — with holder consent on every request.
+  </Card>
+  <Card title="Insurance" icon="shield-check">
+    Check vehicle registration, medical fitness, and asset ownership credentials at quote or claim time.
+  </Card>
+  <Card title="Transport & Logistics" icon="truck">
+    Validate driver licences, operator permits, and vehicle certifications at the gate or border — including via USSD for low-connectivity environments.
+  </Card>
+  <Card title="Government Services" icon="landmark">
+    Issue and verify identity, residency, and benefits credentials using standards-based flows that interoperate with any conformant wallet.
+  </Card>
+  <Card title="Property & Rental" icon="house">
+    Verify tenant income and identity without collecting or storing copies of sensitive documents.
+  </Card>
+</CardGroup>
+
+<Note>
+  **Privacy-first by design.** Raw credential claim values exist only in memory during a single verification event and are discarded the moment it completes. TrustOS never writes raw claims to any durable store — not a database, not a log. What reaches your application is the decision, scores, and a pseudonymous proxy identifier. This is not a configuration option; it is enforced in the platform's code and audit schema.
+</Note>
+
+## Explore TrustOS
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Register as a verifier, create your first policy, and make your first verification call in minutes.
+  </Card>
+  <Card title="Core Concepts" icon="book-open" href="/core-concepts">
+    Understand credentials, policies, assurance levels, and how the verification result is produced.
+  </Card>
+  <Card title="Verifier Integration" icon="plug" href="/integration/verifier-integration">
+    Step-by-step guide to integrating the Verification API into your application, including webhook setup and error handling.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Full reference for every endpoint, request body, and response field in the TrustOS Verification API.
+  </Card>
+</CardGroup>

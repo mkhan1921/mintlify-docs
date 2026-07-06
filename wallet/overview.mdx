@@ -1,0 +1,135 @@
+---
+title: "TrustOS Wallet: Credential Storage and Presentation"
+sidebarTitle: "Wallet Overview"
+description: "Learn how the TrustOS Wallet gives holders full visibility and control over what they share, with whom, and when — across every verification channel."
+---
+
+The TrustOS Wallet is the holder's interface to the verification platform. It is the only place your credentials live at rest — TrustOS never extracts credentials directly, it requests presentations that you review and approve. Whether you are building a wallet integration or helping users understand what to expect, everything in the wallet experience flows from one principle: nothing leaves your wallet without your explicit consent.
+
+## The Four Questions Every Verification Answers
+
+Every time a verifier requests your credentials, the wallet is designed to give you clear answers to four questions before anything is disclosed:
+
+<Steps>
+  <Step title="What credentials do I have?">
+    Your wallet shows a list of all held credentials with their type, issuer name, validity window, and the issuer's trust score so you can judge the quality of each credential at a glance.
+  </Step>
+  <Step title="Who is requesting them?">
+    The verifier's identity is resolved from the Trust Registry and displayed to you — including their name and approval status — before any fields are shown.
+  </Step>
+  <Step title="What am I sharing?">
+    The exact set of claims that will be disclosed is presented verbatim, grouped by credential, before you make any decision. You will never be surprised after the fact.
+  </Step>
+  <Step title="Do I approve?">
+    You approve or deny each request individually. If you deny, nothing leaves your wallet — the session closes with no disclosure.
+  </Step>
+</Steps>
+
+## Key Capabilities
+
+<CardGroup cols={2}>
+  <Card title="Consent Control" icon="shield-check">
+    Approve or deny every request individually. Grant standing consent for recurring verifications, and revoke it any time from the audit trail view.
+  </Card>
+  <Card title="Verifier Validation" icon="circle-check">
+    The wallet automatically rejects requests from verifiers not registered on the Trust Registry. You never see a request from an unknown party.
+  </Card>
+  <Card title="Selective Disclosure" icon="eye-slash">
+    Only the claims your verifier's policy requires are shared. SD-JWT ensures the remaining claims in your credential stay hidden.
+  </Card>
+  <Card title="Credential Audit Trail" icon="clock-rotate-left">
+    See every verifier that has ever requested your credentials, what they asked for, and when — all from within the wallet.
+  </Card>
+  <Card title="Expiry Alerts" icon="bell">
+    The wallet watches the validity window of every credential and surfaces a renewal prompt 30 days before expiry by default.
+  </Card>
+  <Card title="Issuer Trust Score" icon="star">
+    Each credential displays its issuer's trust score (0–100) so you can assess the standing of who issued it.
+  </Card>
+  <Card title="USSD Channel" icon="mobile">
+    Holders on feature phones can complete the same verification flow without a smartphone. See [USSD Channel](/wallet/ussd-channel) for details.
+  </Card>
+  <Card title="Standing Consent" icon="rotate">
+    Allow a verifier to re-check your credentials on a recurring basis without requiring your approval each time. Revoke standing consent to stop future checks immediately.
+  </Card>
+</CardGroup>
+
+## Verifier Validation Flow
+
+Before you ever see a verification request, the wallet runs an automatic check to confirm the verifier is who they claim to be. This protects you even if a request did not originate through an official TrustOS integration.
+
+<Steps>
+  <Step title="Parse the Authorization Request">
+    The wallet receives an OID4VP Authorization Request via QR code, deep link, or push notification and parses the request object.
+  </Step>
+  <Step title="Resolve and Verify the Verifier">
+    The verifier's `client_id` is resolved to their `did:web` identifier and the request object's digital signature is verified to confirm authenticity.
+  </Step>
+  <Step title="Check the Trust Registry">
+    The wallet queries the Trust Registry to confirm this verifier is currently approved. This lookup is cached with a scheme-defined TTL.
+  </Step>
+  <Step title="Not Registered — Auto-Reject">
+    If the verifier is not registered or is not in an approved status, the wallet rejects the request automatically and shows you an **"unverified requester"** notice. No fields are rendered and nothing is disclosed.
+  </Step>
+  <Step title="Registered — Show the Request">
+    If the verifier is registered, the wallet displays their verified identity, the purpose string, and the exact claims they are requesting — ready for your review.
+  </Step>
+</Steps>
+
+<Warning>
+  The wallet-side verifier check runs independently of the platform-side gate. Both sides verify the verifier. If a request somehow bypasses the platform gate, the wallet still rejects it.
+</Warning>
+
+## Selective Disclosure UX
+
+When you reach the approval screen, the wallet gives you a complete, unambiguous picture of what will be shared:
+
+- **Required claims** are listed separately from **optional claims**. Required claims must be disclosed for the verifier to process the request.
+- **Optional claims** can be withheld. You can proceed with the presentation even if you choose to withhold an optional claim.
+- If you withhold a **required** claim, the wallet informs you that the verifier will likely return a **Decline** result — so you can make an informed choice.
+- For zero-knowledge predicate requests (Phase 2 / BBS), the screen shows the predicate being proved (e.g. *"proves: age ≥ 18"*) rather than any underlying value, making it explicit that your actual date of birth is never disclosed.
+
+<Note>
+  No claim is ever disclosed that is not explicitly listed on the approval screen. The list is the complete disclosure — not a summary.
+</Note>
+
+## Credential Expiry and Renewal
+
+The wallet continuously monitors the `validUntil` date on every credential you hold.
+
+- **30 days before expiry** (configurable), the wallet surfaces a renewal prompt for that credential.
+- The monitoring service can also push early notifications if an issuer revokes a credential ahead of its expiry date — so you find out even if you have not recently opened the wallet.
+- Renewal re-runs the OID4VCI flow against the original issuer, delivering a fresh credential directly to your wallet.
+
+<Tip>
+  If you receive an early revocation notice, check with the issuing organisation to understand whether the credential can be re-issued immediately or requires a new application.
+</Tip>
+
+## SDK Requirements for Wallet Providers
+
+If you are building a wallet that interoperates with TrustOS, your wallet must meet the following requirements before it can be registered as an approved wallet provider.
+
+<AccordionGroup>
+  <Accordion title="Protocol Support">
+    - Implement **OID4VP 1.0** — including DCQL credential queries, `direct_post` and `direct_post.jwt` response modes, and cross-device flow support.
+    - Implement **OID4VCI 1.0** for receiving credentials from approved issuers.
+  </Accordion>
+  <Accordion title="Cryptographic Requirements">
+    - Support **SD-JWT VC** presentation with key-binding JWTs.
+    - Support verification of request objects signed with **ECDSA P-256** and **EdDSA Ed25519**.
+    - BBS presentation support is a Phase 2 requirement.
+  </Accordion>
+  <Accordion title="Trust Registry Integration">
+    Perform the Trust Registry verifier check (described above) before rendering any disclosure fields or allowing the holder to proceed. A wallet that skips this check cannot be approved.
+  </Accordion>
+  <Accordion title="Secure Storage">
+    Store all credentials exclusively in the platform-provided secure storage layer — Android Keystore or iOS Secure Enclave. Credentials must not be written to general device storage or transmitted to any external service outside the defined OID4VP/OID4VCI flows.
+  </Accordion>
+  <Accordion title="Registration">
+    Register your wallet on the Trust Registry as an approved wallet provider. Unregistered wallets cannot receive credentials from approved issuers or submit presentations to TrustOS verifiers.
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  The reference wallet implementation (built on the Sphereon SSI-SDK) is the conformance baseline. The TrustOS conformance test suite mirrors the OpenID conformance profiles used at mDL interoperability events.
+</Note>

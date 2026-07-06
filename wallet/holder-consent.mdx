@@ -1,0 +1,143 @@
+---
+title: "Holder Consent and Privacy Controls in TrustOS"
+sidebarTitle: "Holder Consent"
+description: "Understand how TrustOS consent works — per-presentation and standing modes, what is recorded, how to view your audit trail, and how to revoke at any time."
+---
+
+TrustOS gives credential holders granular, auditable control over what they share and with whom. Every verification requires explicit consent, and holders can revoke that consent at any time. Consent records are designed to tell you exactly what you agreed to — and to give you the power to change your mind — without ever storing the actual values of your credentials.
+
+## Two Consent Modes
+
+TrustOS supports two distinct consent modes. You choose which mode applies when you approve a request in your wallet or via USSD.
+
+| Mode | Lifetime | Typical example |
+|---|---|---|
+| **Per-presentation** | One verification event only | Share your active-employment flag with Lender X, once, right now |
+| **Standing** | Active until you revoke it | Allow Landlord Y to re-check your tax good-standing automatically each month |
+
+<Note>
+  Standing consent is required for any automated or recurring re-verification. If no standing consent is in place, the verifier must request your approval fresh each time. You are never re-verified in the background without your prior agreement.
+</Note>
+
+## What a Consent Record Contains
+
+When you grant consent, TrustOS creates a record that captures your decision. Here is the shape of a consent record:
+
+```json
+{
+  "consentId": "uuid",
+  "verifierDid": "did:web:landlord.example",
+  "scope": {
+    "credentialTypes": ["TaxKey"],
+    "claims": ["goodStandingFlag"],
+    "purpose": "tenancy monitoring"
+  },
+  "mode": "standing",
+  "grantedAt": "2026-06-01T10:00:00Z",
+  "expiresAt": "2027-06-01T10:00:00Z",
+  "revokedAt": null,
+  "channel": "app"
+}
+```
+
+<Note>
+  Only claim **names** are stored in the consent record — never claim **values**. The record captures that you allowed disclosure of `goodStandingFlag` to a named verifier for a stated purpose. The actual value of that flag is never written to the consent record.
+</Note>
+
+Key fields you will see in the record:
+
+| Field | What it means |
+|---|---|
+| `verifierDid` | The verified identity of the organisation you consented to share with |
+| `scope.claims` | The claim names that were in scope — not their values |
+| `scope.purpose` | The stated purpose the verifier declared at request time |
+| `mode` | `per_presentation` or `standing` |
+| `expiresAt` | Optional automatic expiry date for standing consent — after this date the grant is no longer valid |
+| `revokedAt` | Populated when you revoke; `null` means the grant is still active |
+| `channel` | Whether you approved via the mobile app (`app`) or USSD (`ussd`) |
+
+## Consent Operations
+
+<Steps>
+  <Step title="Grant">
+    You approve a verification request in your wallet or via the USSD menu. A consent record is created and an immutable audit event is appended. For per-presentation consent, this record covers the current event only. For standing consent, it remains active until you revoke it or it reaches its `expiresAt` date.
+  </Step>
+  <Step title="Resolve">
+    When a verifier with standing consent initiates an automated re-verification, TrustOS checks the consent record before constructing any request. If no active, non-expired, non-revoked grant exists for the exact combination of holder, verifier, and scope, the re-verification does not proceed.
+  </Step>
+  <Step title="Revoke">
+    You revoke a standing consent grant from the audit trail view in your wallet. The `revokedAt` timestamp is set immediately and a `consent_revoked` event is appended to the audit log. The next re-verification attempt by that verifier will fail consent resolution.
+  </Step>
+  <Step title="List">
+    You can view all your consent grants — active and revoked — along with the verification events that relied on each grant. This view is accessible from within your wallet at any time.
+  </Step>
+</Steps>
+
+## Revocation Is Immediate
+
+<Warning>
+  When you revoke a standing consent grant, it takes effect on the **next re-verification attempt**. There is no cache delay or grace period. The verifier will not be notified of your revocation — their next automated check will simply fail consent resolution and not proceed.
+</Warning>
+
+## Your Holder-Visible Audit Trail
+
+From the audit trail view in your wallet, you can see a complete history of every consent event. For each entry you will see:
+
+- **Who requested** — the verified name and DID of the verifier
+- **What was requested** — the claim names that were asked for
+- **What was shared** — the claim names that were actually disclosed (names only, never values)
+- **When** — the timestamp of the event
+- **Result category** — a high-level outcome (e.g. Approved, Declined)
+- **Channel** — whether the event happened via the mobile app or USSD
+
+You can also revoke any standing consent grant directly from this view.
+
+## Consent API
+
+If you are building a holder-facing application on TrustOS, you can manage consent programmatically via the Consent API. All endpoints require a valid holder token.
+
+<Tabs>
+  <Tab title="List Grants">
+    Retrieve all consent grants and linked verification events for the authenticated holder.
+
+    ```bash
+    curl https://api.trustos.example/v1/consent \
+      -H 'Authorization: Bearer $HOLDER_TOKEN'
+    ```
+
+    The response includes all records — active, expired, and revoked — along with the linked verification event IDs for each.
+  </Tab>
+  <Tab title="Grant Standing Consent">
+    Grant standing consent for a specific verifier, credential type, and claim scope.
+
+    ```bash
+    curl -X POST https://api.trustos.example/v1/consent \
+      -H 'Authorization: Bearer $HOLDER_TOKEN' \
+      -H 'Content-Type: application/json' \
+      -d '{
+        "verifierDid": "did:web:landlord.example",
+        "scope": {
+          "credentialTypes": ["TaxKey"],
+          "claims": ["goodStandingFlag"],
+          "purpose": "tenancy monitoring"
+        },
+        "mode": "standing",
+        "expiresAt": "2027-06-01T10:00:00Z"
+      }'
+    ```
+  </Tab>
+  <Tab title="Revoke Consent">
+    Revoke a specific consent grant by its ID. Revocation takes effect immediately.
+
+    ```bash
+    curl -X DELETE https://api.trustos.example/v1/consent/cs_01J... \
+      -H 'Authorization: Bearer $HOLDER_TOKEN'
+    ```
+
+    A `204 No Content` response confirms the revocation. The grant's `revokedAt` timestamp is set to the current time and the revocation is recorded in the immutable audit log.
+  </Tab>
+</Tabs>
+
+<Tip>
+  If you are building a portal that lets holders manage their consents, use `GET /consent` to display the full grant list and surface any standing consents that are approaching their `expiresAt` date so holders can review and renew them proactively.
+</Tip>

@@ -1,0 +1,105 @@
+---
+title: "How TrustOS Verification Works End-to-End"
+sidebarTitle: "Verification Flow"
+description: "Understand the full lifecycle of a TrustOS verification — from starting a request to receiving an Approve, Decline, or Review result."
+---
+
+When you trigger a verification, TrustOS orchestrates every step automatically: it resolves your policy, generates a standards-based presentation request for the holder's wallet, validates the credential presentation against a seven-step pipeline, and delivers a structured result to your system. You interact with two clear phases — a synchronous phase that returns a transaction ID and presentation channel immediately, and an asynchronous phase that completes once the holder responds and TrustOS evaluates the result.
+
+## How a verification unfolds
+
+<Steps>
+  <Step title="You call POST /verifications">
+    Your system sends a `POST /verifications` request with your `policyId` and the presentation channel you want (QR, direct post, cross-device, or USSD). TrustOS authenticates your request using mTLS and OAuth, then confirms that your verifier DID is registered and approved in the Trust Registry.
+  </Step>
+  <Step title="TrustOS resolves your policy and builds a presentation request">
+    TrustOS reads your policy to determine which credential types, assurance levels, and claims are required. It generates a signed OID4VP Authorization Request containing a DCQL credential query — exactly the fields your policy requires, nothing more. The response returns immediately with a `transactionId` and your chosen presentation channel (QR code image, deep link URL, USSD session code, etc.).
+  </Step>
+  <Step title="The holder scans or clicks">
+    The holder opens their wallet by scanning the QR code, tapping the link, or responding to the USSD prompt. Their wallet fetches the signed request object, verifies that your verifier DID is registered, and shows the holder your verified identity alongside the exact claims being requested — before anything is shared.
+  </Step>
+  <Step title="The holder approves and their wallet sends the presentation">
+    When the holder approves, their wallet constructs a signed Verifiable Presentation (VP) containing only the disclosed claims your policy requested. The wallet sends the VP directly to TrustOS via the `direct_post` endpoint. If the holder declines, the transaction moves to `declined` immediately.
+  </Step>
+  <Step title="TrustOS runs the validation pipeline">
+    TrustOS validates the VP through a seven-step pipeline. Each step can short-circuit to `Decline` — see the [Validation pipeline](#validation-pipeline) section below for the full order.
+  </Step>
+  <Step title="The Decision Engine computes the outcome">
+    Once validation completes, the Decision Engine evaluates your policy's `decision` block against the validation result and fraud signals, producing an `Approve`, `Decline`, or `Review` outcome along with risk and trust scores.
+  </Step>
+  <Step title="TrustOS delivers the result to your system">
+    The result is delivered via webhook (recommended) or available immediately via polling on `GET /verifications/{transactionId}`. The result contains the outcome, scores, proxy identifier, and any compute output — never raw credential claim values.
+  </Step>
+</Steps>
+
+## Presentation channels
+
+Choose the channel that fits your use case when you call `POST /verifications`.
+
+<Tabs>
+  <Tab title="QR Code">
+    **Best for:** in-person verification at a branch, store, checkpoint, or site entry.
+
+    TrustOS returns a QR code (or a `request_uri` encoded as a QR) that you display on a screen. The holder scans it with their wallet on their own device. The two devices never need to be on the same network — the holder's wallet contacts TrustOS directly.
+  </Tab>
+  <Tab title="Direct Post (Web)">
+    **Best for:** online onboarding, web checkout, or any same-device mobile flow.
+
+    TrustOS returns a deep link or app-link that opens the holder's wallet on the same device. After the holder approves, the wallet returns control to your web page via a `redirect_uri`. On desktop, this channel falls back to cross-device.
+  </Tab>
+  <Tab title="Cross-Device">
+    **Best for:** desktop banking portals, agent-assisted onboarding, or any flow where the session starts on a desktop but the holder approves on their phone.
+
+    Your desktop application shows a QR or pushes a request. The holder approves on their phone. TrustOS correlates both sides using the `nonce` and `transactionId`. Your desktop polls `GET /verifications/{id}` or listens for a server-sent event.
+  </Tab>
+  <Tab title="USSD">
+    **Best for:** feature phones or low-connectivity environments.
+
+    TrustOS routes the presentation request through a USSD Gateway, which renders your verifier identity and the requested fields as USSD menu pages. The holder approves with a PIN. The resulting VP goes through the same validation pipeline as every other channel.
+  </Tab>
+</Tabs>
+
+## Validation pipeline
+
+Every VP goes through these seven steps in order. Any step can short-circuit the pipeline and produce a `Decline` result — the cheapest and most likely-to-fail checks run first.
+
+1. **VP proof** — TrustOS verifies the holder's key-binding signature over the VP and the session nonce. A missing or invalid proof immediately produces a `Decline`.
+2. **Validity window** — Every credential's `validFrom` and `validUntil` is checked against the current time. Expired credentials produce a `Decline`.
+3. **Credential proof** — TrustOS verifies the issuer's cryptographic signature over all disclosed claims. This covers SD-JWT, BBS-derived proofs, and W3C Data Integrity proofs.
+4. **Issuer trust** — TrustOS resolves the issuer's DID, confirms the issuer is in the Trust Registry with `approved` status, and checks that their trust score meets the scheme minimum. An unresolvable or unapproved issuer produces a `Decline`.
+5. **Revocation** — TrustOS checks the status bit for each credential against the issuer's Bitstring Status List. A revoked credential immediately produces a `Decline`.
+6. **Policy compliance** — TrustOS confirms that all required credential types are present, assurance levels meet your policy's minimums, and all required claims were disclosed.
+7. **Fraud signals** — TrustOS evaluates graph, device, and credential-pattern signals to compute a fraud score. High fraud scores feed into the `reviewWhen` predicates in your policy's decision block.
+
+<Note>
+  Raw credential claim values exist only in memory during the validation pipeline. They are never written to any persistent storage. The result your system receives contains outcomes, scores, flags, and identifiers only.
+</Note>
+
+## Transaction status values
+
+Poll `GET /verifications/{transactionId}` or check incoming webhook payloads for these status values.
+
+| Status | Meaning |
+|---|---|
+| `awaiting_presentation` | The transaction is open and waiting for the holder to present credentials. The session has not yet expired. |
+| `completed` | The holder responded and the pipeline ran to completion. Check `result.outcome` for `Approve`, `Decline`, or `Review`. |
+| `declined` | The holder explicitly denied the presentation request in their wallet before submitting. |
+| `expired` | The holder did not respond before the session window closed (default 5 minutes). |
+| `error` | An unexpected error occurred during processing. Retry or contact support with the `transactionId`. |
+
+## Receiving results
+
+TrustOS supports two result delivery methods.
+
+<CardGroup cols={2}>
+  <Card title="Webhook (Recommended)" icon="webhook">
+    Register a webhook endpoint on your verifier account. TrustOS sends a signed `POST` to your endpoint as soon as a result is ready. This is the lowest-latency option and avoids polling overhead.
+  </Card>
+  <Card title="Polling" icon="arrows-rotate">
+    Call `GET /verifications/{transactionId}` at intervals. The response contains the full result once the status moves to `completed`. Suitable for simpler integrations or development environments.
+  </Card>
+</CardGroup>
+
+<Tip>
+  For latency-sensitive integrations, webhooks are strongly preferred. Confidential Compute runs asynchronously and its output is attached to the result when your webhook fires — no additional polling is required.
+</Tip>

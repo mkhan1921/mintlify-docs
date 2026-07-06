@@ -1,0 +1,107 @@
+---
+title: "TrustOS REST API Reference Overview"
+sidebarTitle: "API Overview"
+description: "Complete reference for the TrustOS JSON-over-HTTPS REST API — resources, conventions, versioning, idempotency, and pagination in one place."
+---
+
+The TrustOS API is a JSON-over-HTTPS REST API versioned at `/v1`. Every request must carry both an mTLS client certificate and a valid OAuth 2.0 bearer token — see the [Authentication](/api/authentication) page for details on obtaining them. Responses use ISO-8601 timestamps, cursor-based pagination, and [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) `problem+json` for error bodies, so you can handle errors consistently across every endpoint.
+
+## Base URL
+
+```
+https://api.trustos.example/v1
+```
+
+<Note>
+  A sandbox environment at `https://sandbox.api.trustos.example/v1` mirrors the production API with synthetic credentials. Use it for development and integration testing without affecting live data.
+</Note>
+
+## Resources
+
+The table below lists every resource exposed by the API.
+
+| Resource | Purpose |
+| :--- | :--- |
+| `POST /verifications` | Start a verification event |
+| `GET /verifications/{id}` | Poll verification result |
+| `GET /policies` | List your policies |
+| `POST /policies` | Create a policy |
+| `GET /policies/{id}` | Get a policy |
+| `PUT /policies/{id}` | Create a new immutable policy version |
+| `GET /policies/{id}/versions` | Policy version history |
+| `GET /consent` | Holder consent records |
+| `POST /consent` | Grant standing consent |
+| `DELETE /consent/{id}` | Revoke consent |
+| `GET /marketplace` | Browse credential types and templates |
+| `POST /compute-manifests` | Register a compute manifest |
+| `GET /compute-manifests/{id}` | Inspect a manifest |
+| `GET /webhooks` | List webhooks |
+| `POST /webhooks` | Register a webhook |
+| `DELETE /webhooks/{id}` | Remove a webhook |
+| `GET /audit` | Query audit events |
+
+## Conventions
+
+<CardGroup cols={2}>
+  <Card title="Content type" icon="file-code">
+    All request and response bodies are `application/json`. Always send `Content-Type: application/json` on requests that include a body.
+  </Card>
+  <Card title="Timestamps" icon="clock">
+    All timestamps are ISO-8601 strings in UTC, for example `2026-06-24T10:03:11Z`.
+  </Card>
+  <Card title="Pagination" icon="list">
+    List endpoints use opaque cursor pagination via `?cursor=&limit=`. The `limit` parameter is capped at a maximum value documented per endpoint.
+  </Card>
+  <Card title="Errors" icon="triangle-exclamation">
+    Error responses use RFC 9457 `problem+json` with a `traceId` field. See the [Authentication](/api/authentication) page for a full list of error codes.
+  </Card>
+</CardGroup>
+
+## Idempotency
+
+`POST /verifications` and `POST /policies` support the `Idempotency-Key` header. When you supply the same key with the same request body within a **24-hour window**, the API returns the original response without re-executing the operation. This makes it safe to retry requests on network failures.
+
+```bash
+curl -X POST https://api.trustos.example/v1/verifications \
+  --cert client.crt --key client.key \
+  -H 'Authorization: Bearer $TOKEN' \
+  -H 'Idempotency-Key: a8098c1a-f86e-11da-bd1a-00112444be1e' \
+  -H 'Content-Type: application/json' \
+  -d '{"policyId": "pol_01J...", "channel": "qr"}'
+```
+
+If the same `Idempotency-Key` is replayed within 24 hours but with a **different** body, the API returns `409 conflict`.
+
+<Tip>
+  Use a UUID v4 as your idempotency key. Generate it client-side before sending the request so you can safely retry on timeout or network error without risking a duplicate operation.
+</Tip>
+
+## Versioning
+
+The API is versioned by URL prefix (`/v1`). Within a major version, TrustOS only makes additive changes — new fields, new optional parameters, and new endpoints — that do not break existing integrations. Breaking changes increment the version prefix to `/v2`, and prior major versions are maintained for a documented deprecation period.
+
+## Error format
+
+All error responses follow [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) `problem+json` with `Content-Type: application/problem+json`. Every problem response includes a `traceId` you can provide to TrustOS support. Error bodies never contain raw credential claim data or internal stack traces.
+
+```json
+{
+  "type": "invalid-request",
+  "title": "Invalid verification request",
+  "status": 400,
+  "detail": "policyId: must be at least 1 character",
+  "traceId": "4lW9kZBRm0qHzVJt"
+}
+```
+
+| HTTP status | `type` | When |
+| :--- | :--- | :--- |
+| `400` | `invalid-request` | Malformed body or schema violation |
+| `401` | `unauthenticated` | Missing or invalid mTLS cert, or expired / invalid token |
+| `403` | `verifier-not-approved` | Verifier not in the Trust Registry, or scope mismatch |
+| `404` | `not-found` | Unknown transaction, policy, or resource |
+| `409` | `conflict` | Idempotency key replayed with a different body |
+| `410` | `presentation-expired` | OID4VP session expired before the holder responded |
+| `422` | `policy-unsatisfiable` | Policy references an unknown credential type or manifest |
+| `429` | `rate-limited` | Quota exceeded — check the `Retry-After` header |
+| `502` / `504` | `dependency-failure` | Upstream dependency (Trust Registry, revocation) unavailable and cache is stale |

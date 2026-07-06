@@ -1,0 +1,147 @@
+---
+title: "Run Private Models on Verified Data with TrustOS"
+sidebarTitle: "Confidential Compute"
+description: "Run proprietary models on verified credential data without exposing your logic to holders or TrustOS — only the output is returned."
+---
+
+Confidential Compute — sometimes called blind query — lets you run your proprietary model on a holder's verified credential data without either side seeing the other's secrets. Your model logic stays private from holders and from TrustOS; the holder's raw credential claims stay private from you and from TrustOS. The two secrets meet only inside an attested, isolated enclave with no network connection and no disk — and when the run completes, both the model and the claims are gone. Only the declared output is returned to you.
+
+## The Two Secrets
+
+Every Confidential Compute run protects two distinct secrets simultaneously.
+
+| Secret | Owner | Hidden from |
+|---|---|---|
+| Raw credential claims | Holder | Verifier, TrustOS-at-rest |
+| Model logic / weights / script | Verifier | Holder, TrustOS-at-rest |
+
+Both secrets are resolved in memory inside the enclave and destroyed when the enclave tears down. Nothing persists unless you explicitly opt your model into the registry.
+
+## What You Can Submit
+
+You can submit any of the following artifact types as a compute manifest:
+
+- **Signed ML model artifact** — a registered, signed model binary that requires full hardware isolation and cryptographic attestation
+- **Minified or obfuscated calculation script** — a lightweight script compiled to run inside a sandboxed WebAssembly runtime
+- **Compiled WASM module** — a pre-compiled WebAssembly module with deterministic, resource-bounded execution
+- **Custom scoring or sharing template** — a template that defines the fields, weights, and output format for a scoring or data-sharing computation
+
+## The Compute Manifest
+
+Every submission is governed by a compute manifest you register with TrustOS. The manifest is the binding contract that governs exactly which artifact runs, which credential fields it receives as inputs, what output schema it must produce, and what resource limits apply.
+
+```json
+{
+  "manifestId": "mft_lender_affordability",
+  "verifierDid": "did:web:lender.example",
+  "artifact": {
+    "kind": "wasm",
+    "hash": "sha256-...",
+    "signature": "...",
+    "runtime": "nitro"
+  },
+  "inputs": [
+    "Employment.payrollVerifiedFlag",
+    "BankKey.accountStanding"
+  ],
+  "outputSchema": {
+    "affordabilityBand": "enum[low,medium,high]"
+  },
+  "resourceBounds": {
+    "maxCpuMs": 500,
+    "maxMemMb": 64
+  }
+}
+```
+
+The `inputs` array specifies which credential claim paths are marshalled into the enclave — the manifest is the only access-control list for what enters the compute environment. The `outputSchema` is validated before the output leaves the compute layer; any output that does not match the declared schema is dropped.
+
+## How to Use Confidential Compute
+
+<Steps>
+  <Step title="Register your compute manifest">
+    Call `POST /compute-manifests` with your artifact reference, input specification, output schema, and resource bounds. TrustOS verifies the artifact signature and records the manifest hash.
+
+    ```bash
+    curl -X POST 'https://api.trustos.example/v1/compute-manifests' \
+      -H 'Authorization: Bearer $TOKEN' \
+      -H 'Content-Type: application/json' \
+      -d '{
+        "manifestId": "mft_lender_affordability",
+        "artifact": { "kind": "wasm", "hash": "sha256-...", "signature": "...", "runtime": "nitro" },
+        "inputs": ["Employment.payrollVerifiedFlag", "BankKey.accountStanding"],
+        "outputSchema": { "affordabilityBand": "enum[low,medium,high]" },
+        "resourceBounds": { "maxCpuMs": 500, "maxMemMb": 64 }
+      }'
+    ```
+  </Step>
+
+  <Step title="Reference the manifest in your policy">
+    Add the `computeManifest` field to your policy JSON, pointing at the manifest you registered. This tells TrustOS to run the manifest automatically whenever a valid presentation arrives for that policy.
+
+    ```json
+    {
+      "policyId": "pol_affordability_check",
+      "credentialRequirements": [...],
+      "computeManifest": "mft_lender_affordability"
+    }
+    ```
+  </Step>
+
+  <Step title="Optionally add a sharing template">
+    If you want to further control how inputs are routed into the manifest and ensure only the compute output — not any raw claim values — flows to your downstream systems, add a sharing template that references the manifest.
+  </Step>
+
+  <Step title="Start a verification normally">
+    Submit a standard `POST /verifications` request. TrustOS handles the rest: it validates the presentation, resolves the required claims, and runs your manifest inside the enclave automatically.
+
+    ```bash
+    curl -X POST 'https://api.trustos.example/v1/verifications' \
+      -H 'Authorization: Bearer $TOKEN' \
+      -H 'Content-Type: application/json' \
+      -d '{ "policyId": "pol_affordability_check", "presentationUri": "openid4vp://..." }'
+    ```
+  </Step>
+
+  <Step title="Read computeOut in the result">
+    The verification result includes a `computeOut` field containing your model's validated output alongside the standard `outcome` field.
+
+    ```json
+    {
+      "outcome": "Approve",
+      "computeOut": {
+        "affordabilityBand": "high"
+      }
+    }
+    ```
+  </Step>
+</Steps>
+
+## Output Schema Enforcement
+
+Your manifest's `outputSchema` is not advisory — it is enforced. TrustOS validates every compute output against the declared schema before the result leaves the compute layer. Outputs that do not conform to the schema are rejected entirely. This prevents a misbehaving model from encoding raw claim values into a verbose or unexpected output channel.
+
+<Tip>
+  For high-sensitivity use cases, restrict your `outputSchema` to coarse buckets (for example `enum[low,medium,high]` rather than a continuous numeric score). Coarser outputs reduce the theoretical channel capacity for encoding claim information in the result.
+</Tip>
+
+## Runtimes
+
+TrustOS selects the execution runtime based on the `runtime` field in your manifest's artifact declaration.
+
+<CardGroup cols={2}>
+  <Card title="Nitro Enclaves" icon="shield-halved">
+    The default for signed ML models and any submission where you need cryptographic proof of which code ran. Hardware attestation ensures your model is decryptable only by the exact approved enclave image — not by a compromised operator or any code running outside the enclave.
+  </Card>
+  <Card title="Lambda MicroVM (wasmtime)" icon="bolt">
+    Used for lightweight WASM scripts and calculation modules that do not require full hardware attestation. Faster cold-start, deterministic execution, and strict CPU, memory, and time bounds enforced by the WebAssembly runtime.
+  </Card>
+</CardGroup>
+
+## Audit of Compute Runs
+
+Every compute run produces an audit record that you and your compliance team can query. The record captures the requester identity, manifest ID, artifact hash, output digest, and timestamp. Model plaintext, compute inputs, and raw claim values are never written to the audit log.
+
+<Note>
+  TrustOS does not store your model binary after the run completes unless you explicitly opt into the model registry (`"retainModel": true` in the manifest). By default, the artifact is decrypted inside the enclave, used for the computation, and destroyed when the enclave tears down. The compute output is the only artifact that persists.
+</Note>

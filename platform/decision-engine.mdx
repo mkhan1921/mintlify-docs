@@ -1,0 +1,127 @@
+---
+title: "Understanding TrustOS Verification Results"
+sidebarTitle: "Decision Engine"
+description: "Learn how TrustOS produces Approve, Decline, and Review outcomes — and how to interpret the scores, flags, and proxy in every result."
+---
+
+After the validation pipeline runs, TrustOS combines the validation outcome, fraud signals, and any confidential compute output into a single structured result and delivers it to your system. The Decision Engine is the last synchronous step in every verification — it maps what the pipeline found to one of three outcome types along with supporting scores, flags, and a privacy-preserving identifier your system can use for repeat interactions. Understanding what each field means helps you integrate correctly and handle edge cases with confidence.
+
+## Outcome types
+
+Every completed verification produces exactly one outcome. Your integration should handle all three.
+
+| Outcome | Meaning | When it fires |
+|---|---|---|
+| `Approve` | All checks passed and the policy is satisfied | `satisfiedBy` is `MET` and no `declineWhen` or `reviewWhen` predicate fires |
+| `Decline` | One or more checks failed | Any `declineWhen` predicate is true (e.g. `anyRevoked`, `anyExpired`, `policyUnmet`) |
+| `Review` | Passed technical checks but flagged conditions require human review | Any `reviewWhen` predicate is true (e.g. `fraudScore>0.6`, `assurance==min`) |
+
+<Note>
+  The result your system receives never contains raw credential claim values — only the outcome, scores, flags, the proxy identifier, and any confidential compute output. This is enforced at the platform level, not just by convention.
+</Note>
+
+## Full result shape
+
+This is the complete JSON object TrustOS delivers to your webhook or returns from `GET /verifications/{transactionId}` once the status is `completed`.
+
+```json
+{
+  "transactionId": "evt_01J...",
+  "status": "completed",
+  "result": {
+    "outcome": "Approve",
+    "riskScore": 0.12,
+    "trustScore": 88,
+    "riskFlags": [],
+    "proxy": "px_9f3...",
+    "computeOut": { "affordabilityBand": "high" },
+    "reasons": ["all required credentials valid and policy met"]
+  },
+  "completedAt": "2026-06-24T10:03:11Z"
+}
+```
+
+## Result fields
+
+<ResponseField name="outcome" type="string">
+  The primary decision: `Approve`, `Decline`, or `Review`. This is the field your integration should branch on first.
+</ResponseField>
+
+<ResponseField name="riskScore" type="number">
+  A per-event risk score between `0.0` and `1.0`. Higher values indicate a riskier presentation. Computed from the assurance levels presented, fraud graph signals, and device/SIM signals. A score above your policy's `fraudScore` threshold triggers `Review`.
+</ResponseField>
+
+<ResponseField name="trustScore" type="number">
+  A subject-level trust score between `0` and `100`. Higher values indicate greater trustworthiness. Computed from the issuer trust scores of the presented credentials, credential history, and signal history. This score moves more slowly than `riskScore` — it reflects a longer-term view of the subject.
+</ResponseField>
+
+<ResponseField name="riskFlags" type="array">
+  A list of named risk signals that fired during validation. Entries are drawn from the fraud graph, the `safetyIndicator` fields on credentials, and issuer-supplied `fraudSignal` values. An empty array means no flags were raised. Each entry is a non-PII string describing the signal (e.g. `issuer_safety_indicator_present`).
+</ResponseField>
+
+<ResponseField name="proxy" type="string">
+  A pseudonymous, stable, per-scheme identifier for the subject. See [The proxy identifier](#the-proxy-identifier) below.
+</ResponseField>
+
+<ResponseField name="computeOut" type="object | null">
+  Present when your policy references a compute manifest. Contains only the output your model produced — for example `{ "affordabilityBand": "high" }`. If no compute manifest was referenced, this field is `null`.
+</ResponseField>
+
+<ResponseField name="reasons" type="array">
+  A list of plain-language strings explaining the outcome. Designed to be actionable and non-PII — safe to log and useful for case management review. See [Reasons reference](#reasons-reference) below.
+</ResponseField>
+
+## Risk Score vs Trust Score
+
+The two scores answer different questions and should be used for different purposes.
+
+| | Risk Score | Trust Score |
+|---|---|---|
+| **Question** | How risky is this presentation? | How trustworthy is this subject? |
+| **Range** | 0.0–1.0 (higher = riskier) | 0–100 (higher = better) |
+| **Inputs** | Assurance levels, fraud graph signals, device and SIM signals | Issuer trust scores, credential history, signal history |
+| **Volatility** | Per-event — can change significantly between verifications | Slower-moving — reflects accumulated history |
+| **Typical use** | Decide whether to route to `Review`; feed into your own risk logic | Calibrate how much weight to give the result; track subject quality over time |
+
+## The proxy identifier
+
+The `proxy` value is a pseudonymous, stable identifier assigned per scheme. It lets your system recognise a returning subject across multiple verification events without storing any personally identifiable information.
+
+<CardGroup cols={2}>
+  <Card title="What proxy is" icon="fingerprint">
+    A consistent, opaque string that maps to the same subject within a scheme. You can store it safely alongside your own records and use it to look up a subject's verification history or pre-fill flows on a return visit.
+  </Card>
+  <Card title="What proxy is not" icon="eye-slash">
+    The proxy never contains a name, identity number, date of birth, or any other PII. It cannot be reversed to identify the subject. It is scheme-scoped — the same person may have a different proxy value in a different scheme.
+  </Card>
+</CardGroup>
+
+## Handling Review outcomes
+
+A `Review` outcome means the presentation passed all cryptographic and compliance checks but one or more conditions were flagged that warrant human scrutiny. Common triggers include a fraud score above your policy's threshold or credentials presented at the minimum allowed assurance floor.
+
+When you receive a `Review`:
+
+1. **Do not automatically approve or decline** — the technical validation passed, but a human should assess the flagged conditions.
+2. **Route to your Case Management workflow** — use the `reasons` array to give your analyst context.
+3. **Use the TrustOS Case Management Dashboard** — TrustOS provides a built-in dashboard where analysts can review the result, scores, flags, and the audit trail for the transaction, and record their decision.
+4. **Record the final outcome in your own system** — TrustOS provides the verification result; the downstream business decision (for example, a credit approval) is yours to record.
+
+<Tip>
+  Configure your `reviewWhen` predicates carefully. Setting the `fraudScore` threshold too low will send too many legitimate verifications to manual review. Start with `fraudScore>0.7` and adjust based on your observed false-positive rate.
+</Tip>
+
+## Reasons reference
+
+The `reasons` array contains one or more plain-language strings. Common values and their meaning:
+
+| Reason string | Outcome | What it means |
+|---|---|---|
+| `all required credentials valid and policy met` | `Approve` | Every requirement in your policy was satisfied and no flags fired. |
+| `Driver Licence expired` | `Decline` | The presented Driver Licence credential is outside its `validUntil` date. |
+| `issuer not in trust registry` | `Decline` | The issuer's DID could not be resolved or is not in the Trust Registry with `approved` status. |
+| `credential revoked` | `Decline` | At least one credential's revocation status bit is set in the issuer's Bitstring Status List. |
+| `fraud score above threshold` | `Review` | The computed fraud score exceeded the `fraudScore` threshold in your policy's `reviewWhen` block. |
+| `assurance at minimum floor` | `Review` | One or more credentials were presented at exactly the `minAssurance` level configured in your policy. |
+| `required credential missing` | `Decline` | A credential type listed in `requiredCredentials` was not included in the presentation. |
+| `required claim not disclosed` | `Decline` | A claim listed in `requiredClaims` was not selectively disclosed by the holder's wallet. |

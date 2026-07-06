@@ -1,0 +1,232 @@
+---
+title: "Integrate TrustOS as a Verifier: Complete Guide"
+sidebarTitle: "Verifier Guide"
+description: "Step-by-step guide to registering as a verifier, configuring policies, handling OID4VP flows, and parsing verification results in production."
+---
+
+This guide walks you through every step to integrate TrustOS as a verifier — from registering your organization to handling verification results in production. By the end, your application will be able to initiate a credential verification, present a QR code or redirect URL to your user, and receive a structured Approve / Decline / Review outcome without ever touching raw credential data.
+
+## Integration Steps
+
+<Steps>
+
+  <Step title="Register on the Trust Registry">
+    Before you can make any API calls, TrustOS needs to recognize your organization as an approved verifier. Contact TrustOS to begin the onboarding process. During registration you will:
+
+    - Prove control of your `did:web` DID (the decentralized identifier that anchors your organization's identity)
+    - Agree to the scheme's data-handling terms
+    - Receive your **mTLS client certificate**, **OAuth 2.0 client ID and secret**, and your **verifier DID**
+
+    Keep your client certificate and secret safe — they are the root of your API identity. You will need them for every subsequent step.
+  </Step>
+
+  <Step title="Obtain API Credentials">
+    Every TrustOS API call requires two security layers: an mTLS client certificate (proving your verifier identity) and an OAuth 2.0 bearer token (scoping your permissions). Use your client credentials to request a token before you make any other API calls.
+
+    ```bash
+    curl -X POST https://auth.trustos.example/oauth/token \
+      --cert client.crt --key client.key \
+      -d 'grant_type=client_credentials&scope=verifications:write policies:write'
+    ```
+
+    The response includes an `access_token` you attach as a `Bearer` token on every subsequent request. Tokens expire — build token refresh into your client from the start.
+
+    <Note>
+      Both the mTLS certificate **and** a valid bearer token must be present on every request. A missing or invalid certificate returns `401`; a valid certificate for a verifier not yet approved on the Trust Registry returns `403`.
+    </Note>
+  </Step>
+
+  <Step title="Configure Your Verification Policy">
+    A policy tells TrustOS which credentials to request, what assurance level each must meet, which claims must be present, and how to translate the results into a decision. Create your policy with `POST /policies`.
+
+    The example below is an affordability policy for a personal loan application — it requests identity, employment, and bank-standing credentials:
+
+    ```json
+    {
+      "name": "Personal Loan Affordability",
+      "requiredCredentials": [
+        {
+          "type": "Identity",
+          "minAssurance": 3,
+          "requiredClaims": ["fullName", "idNumber"]
+        },
+        {
+          "type": "Employment",
+          "minAssurance": 2,
+          "requiredClaims": ["activeStatus", "payrollVerifiedFlag"]
+        },
+        {
+          "type": "BankKey",
+          "minAssurance": 2,
+          "requiredClaims": ["accountStanding"]
+        }
+      ],
+      "decision": {
+        "onAllPass": "Approve",
+        "reviewWhen": ["fraudScore>0.6"],
+        "declineWhen": ["anyRevoked", "anyExpired", "policyUnmet"]
+      }
+    }
+    ```
+
+    `POST /policies` validates your policy shape and returns a `policyId` along with version `1`. Every subsequent `PUT /policies/{id}` creates a new immutable version — in-flight verifications always use the version pinned at creation time.
+
+    <Tip>
+      Browse the Marketplace (`GET /marketplace`) to discover credential types and pre-built sharing templates for your industry. You can seed a draft policy directly from a Marketplace entry.
+    </Tip>
+  </Step>
+
+  <Step title="Optionally Register a Compute Manifest">
+    If your organization uses a proprietary scoring or decisioning model (for example, a credit affordability engine), you can register it as a **compute manifest** and have TrustOS execute it inside a Confidential Compute enclave during the verification pipeline.
+
+    ```bash
+    curl -X POST https://api.trustos.example/v1/compute-manifests \
+      -H "Authorization: Bearer $ACCESS_TOKEN" \
+      --cert client.crt --key client.key \
+      -H "Content-Type: application/json" \
+      -d '{
+        "name": "lender-affordability-v2",
+        "artifactRef": "oci://your-registry.example/affordability@sha256:abc...",
+        "outputSchema": { "affordabilityBand": "string" }
+      }'
+    ```
+
+    Once registered, reference the manifest ID in your policy's `computeManifest` field. The compute output appears in the result's `computeOut` object — your model logic is never exposed outside the enclave.
+
+    <Note>
+      This step is optional. Skip it if you rely entirely on the built-in policy decision engine.
+    </Note>
+  </Step>
+
+  <Step title="Implement the Verification Client">
+    When a user initiates a flow in your application, call `POST /verifications`. The request is synchronous — you get back a `transactionId` and a `presentation` object immediately, before the user has responded.
+
+    ```typescript
+    const response = await fetch('https://api.trustos.example/v1/verifications', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': crypto.randomUUID(),
+      },
+      body: JSON.stringify({
+        policyId: 'pol_01J...',
+        channel: 'qr',
+      }),
+    });
+
+    const { transactionId, presentation } = await response.json();
+    // Display presentation.qr to the user
+    ```
+
+    The `presentation` object contains the QR code image (`presentation.qr`), the `requestUri`, and an `expiresAt` timestamp. Your application must display this to the user before the session expires.
+  </Step>
+
+  <Step title="Handle OID4VP Presentation Flows">
+    TrustOS supports four presentation channels. Choose the one that matches your deployment context:
+
+    <Tabs>
+      <Tab title="QR Code (In-Person)">
+        Render `presentation.qr` as an image. The user scans it with their wallet app. Use polling or a webhook to detect when they complete the presentation.
+
+        ```typescript
+        // Render the QR to your UI
+        document.getElementById('qr-container').innerHTML =
+          `<img src="${presentation.qr}" alt="Scan with your wallet" />`;
+        ```
+      </Tab>
+      <Tab title="Redirect (Web)">
+        Redirect the user's browser to `presentation.requestUri`. The wallet app handles the flow and the user is returned to your application.
+
+        ```typescript
+        window.location.href = presentation.requestUri;
+        ```
+      </Tab>
+      <Tab title="Cross-Device">
+        Display the QR on a desktop while the user scans with their mobile wallet. Poll for the result using `transactionId`.
+
+        ```typescript
+        // Show QR on desktop; the wallet on mobile will complete the flow
+        showQRCode(presentation.qr);
+        await pollForResult(transactionId);
+        ```
+      </Tab>
+      <Tab title="USSD (Low-Connectivity)">
+        For low-connectivity applicants, pass a `subjectHint` with the user's MSISDN. The platform routes a USSD prompt to their device.
+
+        ```json
+        {
+          "policyId": "pol_01J...",
+          "channel": "ussd",
+          "subjectHint": { "msisdn": "+27820000000" }
+        }
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Parse the Verification Result">
+    Once the user completes (or fails to complete) the presentation, TrustOS calculates the decision and makes it available via webhook or polling. The result contains an `outcome` of `Approve`, `Decline`, or `Review` — never raw credential claim values.
+
+    ```typescript
+    const result = await pollForResult(transactionId);
+
+    switch (result.outcome) {
+      case 'Approve':
+        // Proceed with the transaction.
+        // Store result.proxy for future interactions with this subject.
+        await db.saveVerification({
+          proxy: result.proxy,
+          outcome: result.outcome,
+          trustScore: result.trustScore,
+          riskScore: result.riskScore,
+        });
+        break;
+
+      case 'Decline':
+        // Inform the user and surface result.reasons.
+        showDeclineMessage(result.reasons);
+        break;
+
+      case 'Review':
+        // Route to your case management workflow.
+        await routeToReview(transactionId, result.riskFlags);
+        break;
+    }
+    ```
+
+    <Warning>
+      The result object contains no raw credential claims by design. Do not attempt to extract or cache claim values. Store only `outcome`, `proxy`, scores, and `computeOut`.
+    </Warning>
+  </Step>
+
+  <Step title="Test in the Sandbox">
+    Before going live, validate every flow — including decline and review paths — against the TrustOS sandbox environment. The sandbox mirrors production behavior exactly, using synthetic credentials and a test Trust Registry.
+
+    | Environment | Base URL |
+    | --- | --- |
+    | Sandbox | `https://sandbox.api.trustos.example` |
+    | Production | `https://api.trustos.example` |
+
+    Use your sandbox credentials (issued separately during onboarding) to run tests without affecting live data or your production audit trail. Switch to production credentials and the production base URL when you are ready to go live.
+  </Step>
+
+</Steps>
+
+## Best Practices
+
+<Accordion title="Always include an Idempotency-Key on POST /verifications">
+  Network retries can cause duplicate verification events if you don't include an `Idempotency-Key` header. Generate a fresh UUID for each new verification. If your request times out and you retry with the same key, TrustOS returns the original result instead of starting a second verification. The replay window is 24 hours.
+</Accordion>
+
+<Accordion title="Use webhooks instead of polling in production">
+  Polling `GET /verifications/{id}` is fine for prototyping, but webhook delivery is more efficient and lower-latency in production. Register a webhook endpoint once and reference its `webhookId` in the `callback` field when starting a verification. See the [Webhooks guide](/integration/webhooks) for setup details.
+</Accordion>
+
+<Accordion title="Store only the proxy, outcome, and scores — never raw claims">
+  The result object is intentionally claim-free. Your database should store `proxy`, `outcome`, `riskScore`, `trustScore`, and `computeOut`. The `proxy` value is a pseudonymous, stable, per-scheme identifier — use it to recognize a returning subject across multiple events without storing any personally identifiable information.
+</Accordion>
+
+<Accordion title="Pin your policy version at the start of a flow">
+  Policy versions are immutable. When you call `POST /verifications`, TrustOS pins the current version of your policy to that transaction. Even if you publish a new policy version mid-flow, the in-flight event continues using the version that was active when it started. This ensures consistent behavior during policy rollouts.
+</Accordion>

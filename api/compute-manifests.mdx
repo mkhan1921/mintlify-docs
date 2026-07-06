@@ -1,0 +1,197 @@
+---
+title: "Compute Manifests API: Register Private Models"
+sidebarTitle: "Compute Manifests"
+description: "Register and inspect compute manifests that define the artifact, inputs, output schema, and resource limits for confidential compute runs."
+---
+
+A compute manifest is the contract that governs what runs inside TrustOS's confidential compute layer. It specifies the exact artifact (WASM module, ML model, or script) you want executed against resolved credential claims, the claim paths that serve as inputs, the JSON Schema the output must conform to, and the runtime resource bounds. Before TrustOS will execute any computation, the artifact hash and verifier signature in the manifest must pass validation.
+
+The platform executes manifests inside an attested hardware enclave or a Firecracker microVM — the raw claim values never leave the sandbox, and the verifier never receives anything beyond the declared output. This is the mechanism that lets you run proprietary scoring logic without exposing your model to the platform, and without receiving raw holder data in return.
+
+---
+
+## POST /compute-manifests
+
+Register a new compute manifest. TrustOS validates the artifact signature, confirms the output schema is valid JSON Schema, and binds the manifest to your verifier DID. Once registered, you can reference the `manifestId` in a policy or pass it as an override when starting a verification.
+
+### Request body
+
+<ParamField body="manifestId" type="string">
+  A human-readable, URL-safe identifier for this manifest, e.g. `"mft_lender_affordability"`. If you omit this field, TrustOS auto-generates a unique ID.
+</ParamField>
+
+<ParamField body="artifact" type="object" required>
+  Describes the compute artifact TrustOS will execute.
+
+  <Expandable title="artifact fields">
+    <ParamField body="kind" type="string" required>
+      The type of artifact. One of: `wasm`, `ml-model`, `script`.
+    </ParamField>
+    <ParamField body="hash" type="string" required>
+      SHA-256 hash of the artifact in the format `"sha256-<hex>"`. TrustOS verifies this hash before every execution run.
+    </ParamField>
+    <ParamField body="signature" type="string" required>
+      Base64-encoded signature over the artifact, produced with your verifier's registered signing key.
+    </ParamField>
+    <ParamField body="runtime" type="string" required>
+      The execution environment. Use `"nitro"` for ML models and artifacts requiring hardware attestation, or `"microvm-wasmtime"` for lightweight WASM scripts.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="inputs" type="array" required>
+  Claim paths from resolved credentials that the manifest is permitted to read. Paths use dot notation: `"CredentialType.claimName"`, e.g. `"Employment.payrollVerifiedFlag"`. The compute layer passes only these paths into the sandbox — nothing else.
+</ParamField>
+
+<ParamField body="outputSchema" type="object" required>
+  A JSON Schema object describing the structure and constraints of the compute output. Anything the manifest returns that does not conform to this schema is discarded before the result leaves the sandbox.
+</ParamField>
+
+<ParamField body="resourceBounds" type="object">
+  Optional CPU and memory limits for the sandbox execution.
+
+  <Expandable title="resourceBounds fields">
+    <ParamField body="maxCpuMs" type="integer">
+      Maximum CPU time in milliseconds. Defaults to `5000`.
+    </ParamField>
+    <ParamField body="maxMemMb" type="integer">
+      Maximum memory in megabytes. Defaults to `128`.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Example request
+
+```bash
+curl -X POST https://api.trustos.example/v1/compute-manifests \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "manifestId": "mft_lender_affordability",
+    "artifact": {
+      "kind": "wasm",
+      "hash": "sha256-abc123...",
+      "signature": "base64encodedSignature==",
+      "runtime": "nitro"
+    },
+    "inputs": [
+      "Employment.payrollVerifiedFlag",
+      "BankKey.accountStanding",
+      "TaxKey.goodStandingFlag"
+    ],
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "affordabilityBand": {
+          "enum": ["low", "medium", "high"]
+        }
+      },
+      "required": ["affordabilityBand"]
+    },
+    "resourceBounds": {
+      "maxCpuMs": 500,
+      "maxMemMb": 64
+    }
+  }'
+```
+
+### Response — 201 Created
+
+```json
+{
+  "manifestId": "mft_lender_affordability",
+  "artifact": {
+    "kind": "wasm",
+    "hash": "sha256-abc123...",
+    "signature": "base64encodedSignature==",
+    "runtime": "nitro"
+  },
+  "inputs": [
+    "Employment.payrollVerifiedFlag",
+    "BankKey.accountStanding",
+    "TaxKey.goodStandingFlag"
+  ],
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "affordabilityBand": { "enum": ["low", "medium", "high"] }
+    },
+    "required": ["affordabilityBand"]
+  },
+  "resourceBounds": { "maxCpuMs": 500, "maxMemMb": 64 },
+  "verifierDid": "did:web:lender.example",
+  "registeredAt": "2026-06-24T09:00:00Z"
+}
+```
+
+<ResponseField name="manifestId" type="string">
+  The identifier for the registered manifest, either as you supplied it or auto-generated.
+</ResponseField>
+
+<ResponseField name="verifierDid" type="string">
+  The DID of the verifier that registered this manifest, bound at registration time.
+</ResponseField>
+
+<ResponseField name="registeredAt" type="string">
+  ISO-8601 timestamp of when the manifest was registered.
+</ResponseField>
+
+---
+
+## GET /compute-manifests/{id}
+
+Inspect the metadata of a registered compute manifest. This endpoint is useful for confirming that registration succeeded and reviewing the declared inputs and output schema.
+
+### Path parameters
+
+<ParamField path="id" type="string" required>
+  The `manifestId` of the compute manifest to retrieve.
+</ParamField>
+
+### Example request
+
+```bash
+curl https://api.trustos.example/v1/compute-manifests/mft_lender_affordability \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+### Response — 200 OK
+
+```json
+{
+  "manifestId": "mft_lender_affordability",
+  "artifact": {
+    "kind": "wasm",
+    "hash": "sha256-abc123...",
+    "signature": "base64encodedSignature==",
+    "runtime": "nitro"
+  },
+  "inputs": [
+    "Employment.payrollVerifiedFlag",
+    "BankKey.accountStanding",
+    "TaxKey.goodStandingFlag"
+  ],
+  "outputSchema": {
+    "affordabilityBand": { "enum": ["low", "medium", "high"] }
+  },
+  "resourceBounds": { "maxCpuMs": 500, "maxMemMb": 64 },
+  "verifierDid": "did:web:lender.example",
+  "registeredAt": "2026-06-24T09:00:00Z"
+}
+```
+
+<Note>
+  `GET /compute-manifests/{id}` returns only manifest metadata — the artifact hash, signature, and schema. TrustOS never returns the artifact bytes themselves, and the original artifact is not stored after registration (unless you opted the model into the platform registry at registration time).
+</Note>
+
+---
+
+## Error responses
+
+| HTTP | `type` | When |
+|---|---|---|
+| 400 | `invalid-request` | Malformed body, invalid JSON Schema in `outputSchema`, or unsupported `kind` / `runtime` |
+| 401 | `unauthenticated` | Missing or invalid bearer token |
+| 403 | `verifier-not-approved` | Verifier is not approved in the Trust Registry |
+| 404 | `not-found` | Unknown `manifestId` |
+| 422 | `artifact-signature-invalid` | The artifact signature does not verify against your registered signing key |

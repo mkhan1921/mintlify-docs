@@ -1,0 +1,166 @@
+---
+title: "Security Requirements for TrustOS Integrations"
+sidebarTitle: "Security"
+description: "Authentication requirements, TLS standards, idempotency rules, error codes, rate limiting, and data-handling obligations for TrustOS integrations."
+---
+
+TrustOS is designed for high-stakes trust decisions. This page covers the security requirements your integration must meet and the protections TrustOS provides by default. Meeting these requirements is not optional — a misconfigured integration can be blocked at the API gateway, return 401 or 403 errors, or produce unreliable results in production.
+
+## Authentication
+
+Every TrustOS API call requires **two** independent security controls to be present simultaneously:
+
+<CardGroup cols={2}>
+  <Card title="mTLS Client Certificate" icon="shield-check">
+    Your verifier certificate, issued to you during Trust Registry registration. It proves your organization's identity at the transport layer. Present it on every request using `--cert` and `--key` in curl, or the equivalent in your HTTP client.
+  </Card>
+  <Card title="OAuth 2.0 Bearer Token" icon="key">
+    A short-lived token obtained via the client credentials flow. It scopes your permissions to specific operations (`verifications:write`, `policies:write`, etc.). Include it as `Authorization: Bearer <token>` on every request.
+  </Card>
+</CardGroup>
+
+Both must be present and valid. The behavior when either is missing or invalid:
+
+| Condition | HTTP Status | Error Type |
+| --- | --- | --- |
+| Missing or invalid mTLS certificate | `401` | `unauthenticated` |
+| Valid certificate, but verifier not on Trust Registry | `403` | `verifier-not-approved` |
+| Valid certificate and token, but wrong scope | `403` | `verifier-not-approved` |
+
+Obtain a token before making API calls:
+
+```bash
+curl -X POST https://auth.trustos.example/oauth/token \
+  --cert client.crt --key client.key \
+  -d 'grant_type=client_credentials&scope=verifications:write policies:write'
+```
+
+Build token refresh into your client from the start. Tokens expire and a stale token causes `401` errors mid-flow.
+
+## TLS Requirements
+
+TrustOS enforces **TLS 1.3 minimum** on all external connections. TLS 1.2 is disabled at the load balancer and CDN layer. If your HTTP client or network proxy does not support TLS 1.3, upgrade it before integrating.
+
+<Note>
+  This applies to connections **you make to TrustOS** and to connections **TrustOS makes to you** (webhook delivery). Ensure your webhook endpoint also accepts TLS 1.3 connections.
+</Note>
+
+## Idempotency
+
+Use the `Idempotency-Key` header on all `POST /verifications` and `POST /policies` requests. Supply a unique UUID for each new operation. If a request times out and you retry with the same key, TrustOS returns the original result without re-executing the operation.
+
+```bash
+curl -X POST https://api.trustos.example/v1/verifications \
+  --cert client.crt --key client.key \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -H "Content-Type: application/json" \
+  -d '{"policyId": "pol_01J...", "channel": "qr"}'
+```
+
+The idempotency window is **24 hours**. A replay within that window with a **different request body** returns `409 conflict`.
+
+<Warning>
+  Omitting `Idempotency-Key` on retried requests can create duplicate verification events. Always include it on every `POST /verifications` call, even in non-retry scenarios — it protects you from accidental duplication caused by network infrastructure.
+</Warning>
+
+## API Error Codes
+
+TrustOS uses **RFC 9457 `problem+json`** for all error responses. Every error includes a `type`, `title`, `status`, `detail`, and `traceId`. The `traceId` is safe to include in support tickets — it never exposes claim data or internal stack details.
+
+| HTTP Status | Error Type | When It Occurs |
+| --- | --- | --- |
+| `400` | `invalid-request` | Malformed request body or JSON Schema violation |
+| `401` | `unauthenticated` | Missing or invalid mTLS certificate or bearer token |
+| `403` | `verifier-not-approved` | Verifier not on the Trust Registry, or token scope mismatch |
+| `404` | `not-found` | Unknown transaction ID or policy ID |
+| `409` | `conflict` | Idempotency key replay with a different request body |
+| `410` | `presentation-expired` | OID4VP presentation session expired before the holder responded |
+| `422` | `policy-unsatisfiable` | Policy references a credential type or compute manifest that does not exist |
+| `429` | `rate-limited` | Per-verifier request quota exceeded |
+| `502` / `504` | `dependency-failure` | Trust Registry or revocation origin unreachable and cache is stale |
+
+### Error Response Format
+
+```json
+{
+  "type": "https://api.trustos.example/errors/rate-limited",
+  "title": "Rate Limited",
+  "status": 429,
+  "detail": "Request quota exceeded for verifier did:web:lender.example",
+  "traceId": "1-abc-xyz"
+}
+```
+
+Error responses always include `traceId` for support escalation. They never expose raw claim data, internal stack traces, or database details.
+
+## Rate Limiting
+
+TrustOS applies per-verifier **token-bucket rate limiting** at the API gateway. Each verifier has its own quota; one verifier's traffic does not affect another's limits.
+
+When you receive a `429` response, inspect the `Retry-After` header — it tells you how many seconds to wait before retrying. Implement exponential backoff with jitter in your client rather than retrying immediately at a fixed interval.
+
+```typescript
+async function callWithRetry(fn: () => Promise<Response>, maxAttempts = 3) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const response = await fn();
+    if (response.status !== 429) return response;
+
+    const retryAfter = parseInt(response.headers.get('Retry-After') ?? '5', 10);
+    const jitter = Math.random() * 1000;
+    await new Promise(resolve => setTimeout(resolve, retryAfter * 1000 + jitter));
+  }
+  throw new Error('Max retry attempts reached');
+}
+```
+
+## Data You Must Never Store
+
+<Warning>
+  The TrustOS result object contains no raw credential claims by design. Your integration must not attempt to extract, log, or cache claim values from any part of the API response. This is a binding obligation under the scheme's data-handling terms you agreed to during registration.
+</Warning>
+
+The only fields you should persist from a verification result are:
+
+| Field | Purpose |
+| --- | --- |
+| `outcome` | The decision: `Approve`, `Decline`, or `Review` |
+| `proxy` | Pseudonymous subject identifier for repeat interactions |
+| `riskScore` | Aggregate risk signal (0.0–1.0) |
+| `trustScore` | Aggregate credential trust signal (0–100) |
+| `riskFlags` | Array of risk signal strings |
+| `computeOut` | Output of your registered compute manifest (if used) |
+| `reasons` | Human-readable decision rationale |
+
+## Using the Proxy Identifier
+
+The `proxy` field in the result is a **pseudonymous, stable, per-scheme identifier** for the subject. It allows you to recognize a returning individual across multiple verification events — for example, to skip re-verification if a recent result is already on file — without storing any personally identifiable information.
+
+```typescript
+// On first verification:
+await db.saveSubject({ proxy: result.proxy, outcome: result.outcome, verifiedAt: new Date() });
+
+// On a subsequent interaction:
+const existing = await db.findByProxy(result.proxy);
+if (existing && isRecent(existing.verifiedAt)) {
+  // Re-use the cached outcome; no need to re-verify
+}
+```
+
+The `proxy` value is scheme-scoped. The same individual presenting credentials under a different scheme will have a different `proxy` value. Do not use it as a cross-scheme identifier.
+
+## Sandbox vs Production
+
+Always test your integration against the sandbox environment before going live. The sandbox mirrors production behavior exactly — the same API surface, the same error codes, and the same policy engine — using synthetic credentials and a test Trust Registry.
+
+| | Sandbox | Production |
+| --- | --- | --- |
+| Base URL | `https://sandbox.api.trustos.example` | `https://api.trustos.example` |
+| Auth URL | `https://sandbox.auth.trustos.example` | `https://auth.trustos.example` |
+| Credentials | Sandbox client cert + secret | Production client cert + secret |
+| Data | Synthetic only | Live |
+| Audit trail | Isolated from production | Production audit log |
+
+<Tip>
+  Run your full test suite — including decline, review, expired, and error paths — in sandbox before switching to production credentials. Sandbox is the right place to validate your signature verification logic, retry handling, and idempotency key behavior.
+</Tip>

@@ -1,0 +1,152 @@
+---
+title: "Core Concepts: How TrustOS Verification Works"
+sidebarTitle: "Core Concepts"
+description: "Learn the key concepts behind TrustOS — credentials, policies, assurance levels, the Trust Registry, and how every verification produces a structured result."
+---
+
+TrustOS is built on a small set of interoperating concepts. Understanding how they fit together will help you design better policies, interpret verification results, and build a more robust integration. This page explains each concept from your perspective as a verifier — the party making trust decisions via the API.
+
+---
+
+## Actors
+
+Every verification involves three roles. As a verifier, you interact directly with the API; the other two roles are handled by the platform and the holder's wallet.
+
+| Actor | What they do |
+|---|---|
+| **Holder** | The person or entity who owns credentials stored in a digital wallet. The holder must explicitly consent to each verification request before any claims leave their device. They see exactly which fields your policy is requesting before they approve. |
+| **Issuer** | An authority — a bank, government agency, employer, or regulator — that signs and issues credentials to holders. Only issuers registered in the Trust Registry can issue credentials that TrustOS will accept. |
+| **Verifier** | You. Your application calls the Verification API, defines the policy a presentation must satisfy, and receives the structured decision. Raw claims never reach your server. |
+
+---
+
+## Verifiable Credentials
+
+A Verifiable Credential (VC) is a tamper-evident, cryptographically signed set of claims about a subject — conforming to the W3C Verifiable Credential Data Model 2.0 (VCDM 2.0). Think of it as a digital equivalent of a passport or payslip: the issuer's signature makes it independently verifiable, and the holder controls where it is presented.
+
+Key properties relevant to you as a verifier:
+
+- **Signed by an issuer** — every credential carries a cryptographic proof from the issuing authority. TrustOS verifies this signature as part of the validation pipeline.
+- **Held in a wallet** — credentials live on the holder's device, not in TrustOS. TrustOS never stores credentials on behalf of holders.
+- **Holder-controlled disclosure** — the holder decides which credentials to share and, through selective disclosure, which specific fields within a credential to reveal.
+- **Never stored by TrustOS** — raw credential data exists in memory only for the duration of a single verification event and is discarded immediately when it completes.
+
+---
+
+## Selective Disclosure
+
+TrustOS uses the SD-JWT cryptographic format, which allows a holder to reveal only the specific claims your policy requests — not the entire credential. The issuer's signature covers all the claims in the credential; the holder can then selectively disclose a subset of those claims while still proving the issuer signed the underlying data.
+
+**Example:** A lender's policy requests `activeStatus` and `payrollVerifiedFlag` from an Employment credential. The holder presents just those two fields. TrustOS confirms the issuer's signature is valid over exactly those claims. The holder's salary amount, employer name, start date, and every other field in the Employment credential are never disclosed, never transmitted, and never seen by TrustOS or by you.
+
+BBS signatures (available in Phase 2) extend this further with zero-knowledge proofs — the holder can prove a predicate such as "income ≥ threshold" without revealing the actual income figure.
+
+---
+
+## The Verification Result
+
+When TrustOS completes a verification, it returns a single structured result. This result is the only data that ever reaches your application from the credential pipeline.
+
+| Field | Type | Description |
+|---|---|---|
+| `outcome` | string | The decision produced by your policy: `Approve`, `Decline`, or `Review`. |
+| `riskScore` | float | A value between `0.0` (no risk signals) and `1.0` (high risk), derived from fraud-graph signals, device patterns, and credential anomalies. |
+| `trustScore` | integer | A value between `0` and `100` reflecting the strength of the issuer chain and credential evidence. Higher is more trustworthy. |
+| `riskFlags` | array | Named signals that contributed to the risk score — for example, patterns associated with known fraud rings or anomalous presentation behaviour. |
+| `proxy` | string | A pseudonymous, stable identifier for the holder within your scheme. Lets you recognise a returning holder across multiple verifications without storing any PII. |
+| `computeOut` | object | If you configured a confidential compute model on the policy, this field contains the model's output — for example `{"affordabilityBand": "high"}`. TrustOS never sees the model's internals; it only sees this output. |
+| `reasons` | array | Human-readable strings explaining the decision, suitable for display in a case management workflow. |
+
+<Note>
+  Raw credential claim values — names, ID numbers, salary figures, dates of birth — are **never** present in the result. The result schema has no field for raw claims, by design. If your application receives a result and needs to store something, store `outcome`, `riskScore`, `trustScore`, `proxy`, and `computeOut`. Never attempt to reconstruct or cache raw claim data.
+</Note>
+
+---
+
+## Policies
+
+A policy is a JSON configuration that governs a verification. It defines:
+
+- **Which credential types** the holder must present (e.g. `Identity`, `Employment`, `VehicleRegistration`)
+- **Minimum assurance level** each credential type must carry
+- **Required claims** that must be disclosed within each credential type
+- **Decision rules** that map validation outcomes to `Approve`, `Decline`, or `Review`
+- Optionally, a **sharing template** (a predefined field/weight configuration) or a **compute manifest** (a confidential model to run against the disclosed claims)
+
+You manage policies via the `/policies` endpoints. Policies are **versioned and immutable** per version — when you update a policy, TrustOS creates a new version rather than overwriting the existing one. Verifications that are already in flight continue to use the policy version they were started with, so you can update policies safely without disrupting live sessions.
+
+```json
+{
+  "name": "Employment and Identity Check",
+  "requiredCredentials": [
+    {
+      "type": "Identity",
+      "minAssurance": 2,
+      "requiredClaims": ["fullName", "idNumber"]
+    },
+    {
+      "type": "Employment",
+      "minAssurance": 2,
+      "requiredClaims": ["activeStatus", "payrollVerifiedFlag"]
+    }
+  ],
+  "decision": {
+    "onAllPass": "Approve",
+    "declineWhen": ["anyRevoked", "anyExpired", "policyUnmet"],
+    "reviewWhen": ["highRiskScore"]
+  }
+}
+```
+
+---
+
+## Assurance Levels
+
+Assurance level is an integer that describes how strongly the issuer verified the holder's identity before issuing a credential. When you set `minAssurance` in a policy, TrustOS rejects any credential that does not meet or exceed that level.
+
+| Level | Meaning |
+|---|---|
+| **0** | Self-asserted, unverified. The holder provided information, but it was not checked against any authoritative source. |
+| **1** | Single weak factor — for example, a verified email address or phone number. |
+| **2** | Document-verified with no liveness check. The holder's identity was confirmed against a government-issued document. |
+| **3** | Document-verified with biometric liveness. In addition to document verification, the holder completed a live facial match. |
+| **4** | In-person or supervised proofing. The holder was verified in person by a qualified agent or at a supervised terminal. |
+
+For most financial and employment use cases, `minAssurance: 2` is the practical minimum. For higher-value decisions such as mortgage origination or border control, consider `minAssurance: 3` or `4`.
+
+---
+
+## Trust Registry
+
+The Trust Registry is the authoritative list of approved participants in the TrustOS ecosystem. Before any credential is accepted or any verification is processed, the platform checks the Trust Registry.
+
+- **Verifiers** — your organisation is registered as an approved verifier. Every API call is validated against this registration. If your verifier DID is not on the registry or has been suspended, requests are rejected before they enter the pipeline.
+- **Issuers** — only issuers registered in the Trust Registry can issue credentials that TrustOS accepts. Unregistered issuers are rejected at the credential proof validation step. Each issuer carries a trust score derived from their compliance history and audit record.
+- **Wallets** — holder wallet software must also be from a registered provider. This ensures that the wallet correctly enforces consent and does not leak claims outside the presentation flow.
+
+From your perspective as a verifier, the Trust Registry is mostly invisible — TrustOS enforces it automatically. You benefit from it because you never need to maintain your own list of trusted issuers; the governing authority does that, and TrustOS enforces it on your behalf.
+
+---
+
+## Privacy Contract
+
+<Note>
+  **Raw credential claim values are never written to durable storage by TrustOS.** They exist only in memory during the verification event and are discarded when it completes. This applies to every claim in every credential type — names, ID numbers, addresses, salary figures, medical codes, and any other sensitive field. The audit log records verification outcomes, metadata, and pseudonymous identifiers — never raw claims. This is enforced in code, not configuration.
+</Note>
+
+---
+
+## Glossary
+
+| Term | Meaning |
+|---|---|
+| **VC** | Verifiable Credential — a tamper-evident, cryptographically signed set of claims conforming to the W3C VCDM 2.0 standard. |
+| **VP** | Verifiable Presentation — a holder-signed envelope that packages one or more VCs or derived proofs for presentation to a verifier. |
+| **DID** | Decentralized Identifier — a resolvable identifier whose associated DID Document publishes the public keys used to verify signatures. TrustOS uses `did:web` and `did:jwk` (HTTPS-based; no blockchain required). |
+| **OID4VP** | OpenID for Verifiable Presentations — the request/response protocol TrustOS uses to ask a holder's wallet to present credentials. Defines how the QR code, deep link, or USSD prompt is structured. |
+| **OID4VCI** | OpenID for Verifiable Credential Issuance — the protocol approved issuers use to issue W3C-conformant credentials into a holder's wallet. |
+| **SD-JWT** | Selective Disclosure JWT — a credential format that lets a holder reveal a chosen subset of the issuer-signed claims, without disclosing the rest. |
+| **BBS** | A pairing-based signature scheme that supports both selective disclosure and unlinkable zero-knowledge proofs (e.g. proving a range without revealing a value). Available in TrustOS Phase 2. |
+| **Bitstring Status List** | A compact, privacy-preserving revocation mechanism. Each credential maps to one bit in a published list; TrustOS checks the relevant bit to determine whether a credential has been revoked by its issuer. |
+| **Proxy** | A pseudonymous, stable identifier assigned to a holder within a verification scheme. Lets you recognise a returning holder across multiple verifications without storing any PII. |
+| **Trust Score** | An integer (0–100) reflecting the strength of the issuer chain and credential evidence underpinning a verification result. Derived from the issuer's compliance record, audit history, and reported incidents. |

@@ -1,0 +1,121 @@
+{
+  "projectType": "saas",
+  "projectName": "TrustOS",
+  "projectDescription": "TrustOS is a standards-based verifiable credential verification platform that enables verifiers across industries to make trust decisions using cryptographically signed credentials, with privacy-preserving selective disclosure and zero-knowledge proofs.",
+  "theme": "luma",
+  "primaryColor": "#2563EB",
+  "lightColor": "#EFF6FF",
+  "darkColor": "#1E3A8A",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "core-concepts"
+            ]
+          },
+          {
+            "group": "Platform",
+            "pages": [
+              "platform/verification-flow",
+              "platform/credential-library",
+              "platform/policy-engine",
+              "platform/trust-registry",
+              "platform/decision-engine"
+            ]
+          },
+          {
+            "group": "Wallet & Issuance",
+            "pages": [
+              "wallet/overview",
+              "wallet/holder-consent",
+              "wallet/ussd-channel",
+              "issuance/overview"
+            ]
+          },
+          {
+            "group": "Advanced Features",
+            "pages": [
+              "advanced/confidential-compute",
+              "advanced/fraud-signals",
+              "advanced/audit-monitoring",
+              "advanced/marketplace"
+            ]
+          },
+          {
+            "group": "Integration",
+            "pages": [
+              "integration/verifier-integration",
+              "integration/issuer-integration",
+              "integration/webhooks",
+              "integration/security",
+              "integration/industries"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/overview",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/verifications",
+              "api/policies",
+              "api/consent",
+              "api/compute-manifests",
+              "api/marketplace",
+              "api/audit",
+              "api/webhooks"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Standards-based OID4VP and OID4VCI verification flows (QR, direct post, cross-device, USSD)",
+    "Policy Engine with per-verifier configurable credential requirements and assurance levels",
+    "Selective disclosure via SD-JWT and BBS cryptographic suites",
+    "Confidential Compute (blind query) using AWS Nitro Enclaves for privacy-preserving model execution",
+    "Trust Registry with issuer trust scoring and scheme-level access control",
+    "Bitstring Status List revocation checking with fail-closed cache semantics",
+    "Consent Manager with per-presentation and standing consent, holder-revocable at any time",
+    "Decision Engine producing Approve/Decline/Review with risk and trust scores",
+    "Immutable audit trail with hash-chaining and S3 Object Lock compliance",
+    "Credential Marketplace for discoverable credential types and compute templates",
+    "Case Management Dashboard for analyst review",
+    "Lifecycle monitoring for expiry and revocation with automated re-verification"
+  ],
+  "publicApiSurface": [
+    "POST /verifications — start a verification event",
+    "GET /verifications/{id} — poll verification result",
+    "GET /policies — list verifier policies",
+    "POST /policies — create a policy",
+    "GET /policies/{id} — get policy by ID",
+    "PUT /policies/{id} — create new immutable policy version",
+    "GET /policies/{id}/versions — version history",
+    "GET /consent — holder consent records",
+    "POST /consent — grant standing consent",
+    "DELETE /consent/{id} — revoke consent",
+    "GET /marketplace — browse credential types and compute templates",
+    "POST /compute-manifests — register a compute manifest",
+    "GET /compute-manifests/{id} — inspect a manifest",
+    "GET /webhooks — list webhook endpoints",
+    "POST /webhooks — register webhook",
+    "DELETE /webhooks/{id} — remove webhook",
+    "GET /audit — query verifier-scoped audit events"
+  ]
+}

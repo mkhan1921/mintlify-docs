@@ -1,0 +1,265 @@
+---
+title: "Policies API: Configure Verification Requirements"
+sidebarTitle: "Policies"
+description: "Create, retrieve, and version the policies that define which credentials, assurance levels, and claims a verification must satisfy."
+---
+
+Policies are the configuration layer that makes TrustOS work across every use case without platform changes. A policy declares which credential types you require, the minimum assurance level for each, which claim fields must be disclosed, and how the decision engine should map results to an outcome. Every verification event you start is governed by exactly one policy, and the policy version is pinned at request creation so an in-flight verification is never affected by a subsequent update.
+
+Policies are owned by your verifier DID and are immutable per version. You can seed a new policy from a Marketplace entry, or build one from scratch. All policy mutations are recorded in the audit log with a who/when/diff trace.
+
+---
+
+## GET /policies
+
+List all policies belonging to your verifier.
+
+### Example request
+
+```bash
+curl https://api.trustos.example/v1/policies \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+### Response — 200 OK
+
+```json
+{
+  "policies": [
+    {
+      "policyId": "pol_01J...",
+      "name": "Unsecured personal loan — affordability",
+      "version": 3,
+      "validFrom": "2026-06-01T00:00:00Z"
+    }
+  ],
+  "nextCursor": null,
+  "hasMore": false
+}
+```
+
+---
+
+## POST /policies
+
+Create a new policy. TrustOS validates the policy shape, checks that all referenced credential types and manifests are published in the Marketplace, and returns the new policy at version 1.
+
+### Request body
+
+<ParamField body="name" type="string" required>
+  A human-readable label for this policy, e.g. `"Unsecured personal loan — affordability"`.
+</ParamField>
+
+<ParamField body="requiredCredentials" type="array" required>
+  One entry per credential type you require the holder to present. The policy is satisfied only when every entry in this array is met.
+
+  <Expandable title="requiredCredentials item fields">
+    <ParamField body="type" type="string" required>
+      The credential type name as published in the Marketplace, e.g. `"Employment"`, `"BankKey"`, `"TaxKey"`.
+    </ParamField>
+    <ParamField body="minAssurance" type="integer" required>
+      Minimum assurance level (1–4) required for a credential of this type to satisfy the policy.
+    </ParamField>
+    <ParamField body="requiredClaims" type="array" required>
+      Claim field names that must be disclosed. The presentation is rejected if any of these are absent.
+    </ParamField>
+    <ParamField body="optionalClaims" type="array">
+      Claim field names that will be accepted if disclosed but are not required to pass the policy.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="allowedSuites" type="array">
+  List of cryptographic suite identifiers the verifier accepts, e.g. `["ecdsa-sd-2023", "eddsa-rdfc-2022", "dc+sd-jwt"]`. If omitted, all suites trusted by the platform are permitted.
+</ParamField>
+
+<ParamField body="freshness" type="object">
+  Controls how stale revocation and trust-list data can be before the platform rejects the check.
+
+  <Expandable title="freshness fields">
+    <ParamField body="revocationMaxAgeSec" type="integer">
+      Maximum age in seconds of cached revocation status. Set to `0` to require a live check on every verification.
+    </ParamField>
+    <ParamField body="trustListMaxAgeSec" type="integer">
+      Maximum age in seconds of a cached trust-registry entry. Defaults to `900`.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="decision" type="object" required>
+  Defines how the evaluation outcome maps to a policy decision.
+
+  <Expandable title="decision fields">
+    <ParamField body="onAllPass" type="string" required>
+      Decision emitted when all `requiredCredentials` entries are satisfied and no decline conditions are triggered. Typically `"Approve"`.
+    </ParamField>
+    <ParamField body="reviewWhen" type="array">
+      List of condition strings that trigger a `Review` outcome, e.g. `["fraudScore>0.6", "assurance==min"]`.
+    </ParamField>
+    <ParamField body="declineWhen" type="array">
+      List of condition strings that trigger a `Decline` outcome, e.g. `["anyRevoked", "anyExpired", "policyUnmet"]`.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="sharingTemplate" type="string">
+  ID of a sharing template that controls which derived fields are returned to you. Overridable per verification event.
+</ParamField>
+
+<ParamField body="computeManifest" type="string">
+  ID of a registered compute manifest to run against the resolved claims. Overridable per verification event.
+</ParamField>
+
+### Example request
+
+```bash
+curl -X POST https://api.trustos.example/v1/policies \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: create-affordability-policy-v1" \
+  -d '{
+    "name": "Unsecured personal loan — affordability",
+    "requiredCredentials": [
+      {
+        "type": "Identity",
+        "minAssurance": 3,
+        "requiredClaims": ["fullName", "idNumber"],
+        "optionalClaims": ["photoHash"]
+      },
+      {
+        "type": "Employment",
+        "minAssurance": 2,
+        "requiredClaims": ["activeStatus", "payrollVerifiedFlag"]
+      },
+      {
+        "type": "BankKey",
+        "minAssurance": 2,
+        "requiredClaims": ["accountStanding", "fraudSignal"]
+      },
+      {
+        "type": "TaxKey",
+        "minAssurance": 2,
+        "requiredClaims": ["goodStandingFlag", "taxStatus"]
+      }
+    ],
+    "allowedSuites": ["ecdsa-sd-2023", "eddsa-rdfc-2022", "dc+sd-jwt"],
+    "freshness": {
+      "revocationMaxAgeSec": 0,
+      "trustListMaxAgeSec": 900
+    },
+    "decision": {
+      "onAllPass": "Approve",
+      "reviewWhen": ["fraudScore>0.6", "assurance==min"],
+      "declineWhen": ["anyRevoked", "anyExpired", "policyUnmet"]
+    },
+    "sharingTemplate": "tmpl_affordability_v3",
+    "computeManifest": "mft_lender_affordability"
+  }'
+```
+
+### Response — 201 Created
+
+```json
+{
+  "policyId": "pol_01J...",
+  "name": "Unsecured personal loan — affordability",
+  "version": 1,
+  "validFrom": "2026-06-24T10:00:00Z"
+}
+```
+
+<ResponseField name="policyId" type="string">
+  The unique identifier for the newly created policy. Use this as `policyId` when starting verification events.
+</ResponseField>
+
+<ResponseField name="version" type="integer">
+  The version number of this policy. Always `1` on creation.
+</ResponseField>
+
+<ResponseField name="validFrom" type="string">
+  ISO-8601 timestamp from which this policy version is active.
+</ResponseField>
+
+---
+
+## GET /policies/{id}
+
+Retrieve the current (latest) version of a policy.
+
+### Example request
+
+```bash
+curl https://api.trustos.example/v1/policies/pol_01J... \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+### Response — 200 OK
+
+Returns the full policy object including all fields submitted at creation, plus `policyId`, `version`, `verifierDid`, and `validFrom`.
+
+---
+
+## PUT /policies/{id}
+
+Publish a new immutable version of an existing policy. The request body has the same shape as `POST /policies`. TrustOS increments the version number and records the change in the audit log.
+
+### Example request
+
+```bash
+curl -X PUT https://api.trustos.example/v1/policies/pol_01J... \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ ... updated policy body ... }'
+```
+
+### Response — 200 OK
+
+```json
+{
+  "policyId": "pol_01J...",
+  "version": 4,
+  "validFrom": "2026-07-01T00:00:00Z"
+}
+```
+
+<Note>
+  `PUT /policies/{id}` creates a new immutable version — it does not overwrite the previous one. In-flight verifications continue to use the version that was pinned when they were created. The new version takes effect only for verification events started after the `PUT` completes.
+</Note>
+
+---
+
+## GET /policies/{id}/versions
+
+List all historical versions of a policy in reverse chronological order.
+
+### Example request
+
+```bash
+curl https://api.trustos.example/v1/policies/pol_01J.../versions \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+### Response — 200 OK
+
+```json
+{
+  "versions": [
+    { "version": 4, "validFrom": "2026-07-01T00:00:00Z" },
+    { "version": 3, "validFrom": "2026-06-01T00:00:00Z" },
+    { "version": 2, "validFrom": "2026-03-15T00:00:00Z" },
+    { "version": 1, "validFrom": "2026-01-10T00:00:00Z" }
+  ]
+}
+```
+
+---
+
+## Error responses
+
+| HTTP | `type` | When |
+|---|---|---|
+| 400 | `invalid-request` | Malformed body or schema violation |
+| 403 | `verifier-not-approved` | Verifier not approved, or policy belongs to another verifier |
+| 404 | `not-found` | Unknown `policyId` |
+| 409 | `conflict` | `Idempotency-Key` replay with a different request body |
+| 422 | `policy-unsatisfiable` | Policy references an unpublished credential type, sharing template, or compute manifest |

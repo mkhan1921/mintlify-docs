@@ -1,0 +1,122 @@
+---
+title: "Trust Registry: Issuer and Verifier Approval"
+sidebarTitle: "Trust Registry"
+description: "Understand how TrustOS controls who can participate — and what happens when an issuer, verifier, or wallet is not registered or approved."
+---
+
+The Trust Registry is the gatekeeper for every participant in TrustOS. Every issuer, verifier, and wallet provider must be registered and approved before they can play any role in a verification. Wallets automatically reject presentation requests from verifiers that are not in the registry, and TrustOS declines any credential issued by an unregistered or unapproved issuer. The registry is operated by the governing authority for your scheme — a regulator, a scheme operator, or TrustOS acting in that capacity — and TrustOS enforces it on every verification.
+
+<Warning>
+  Until your verifier registration is approved, all verification requests you submit will return a `403` error and any wallet your holders use will reject your presentation requests outright. Complete the registration steps below before going live.
+</Warning>
+
+## Two trust lists
+
+<Tabs>
+  <Tab title="Master / National Trust List">
+    The master list is the authoritative registry of every approved participant across all schemes. Every issuer, verifier, and wallet provider must appear here before they can participate in any verification.
+
+    - **Keyed by `did:web`** — each participant is identified by a resolvable decentralised identifier.
+    - **Roles** — a participant may hold the `issuer`, `verifier`, or `wallet_provider` role (or multiple roles).
+    - **Issuer trust score** — each issuer carries a score from 0 to 100, computed by the governing authority from audit history, compliance status, and reported incidents. See [Issuer trust score](#issuer-trust-score) for details.
+    - **Status** — each entry is `approved`, `suspended`, or `revoked`. Only `approved` entries can participate in verifications.
+    - The full list is signed by the governing authority's `did:web` key, making a cached copy verifiable offline.
+  </Tab>
+  <Tab title="Scheme Trust List">
+    Scheme trust lists layer additional requirements on top of the master list for specific verification schemes (for example, `za-banking-v1` or `za-lending-v1`).
+
+    - **Minimum assurance level** — the floor assurance level required for transactions in this scheme.
+    - **Approved cryptographic suites** — the set of proof formats allowed within the scheme (e.g. `ecdsa-sd-2023`, `eddsa-rdfc-2022`). Credentials using other suites are declined even if the issuer is approved.
+    - **Revocation endpoints** — the Bitstring Status List URL to use for each issuer participating in the scheme.
+    - **Minimum issuer trust score** — credentials from issuers with a trust score below this threshold are declined for transactions in this scheme, even if the issuer is globally `approved`.
+
+    Scheme lists are cached on a schedule set by the governing authority (default: refreshed every 15 minutes).
+  </Tab>
+</Tabs>
+
+## Registry entry shape
+
+Each participant entry in the Trust Registry takes this form:
+
+```json
+{
+  "did": "did:web:bank.example",
+  "roles": ["issuer"],
+  "status": "approved",
+  "trustScore": 87,
+  "allowedSuites": ["ecdsa-rdfc-2019", "ecdsa-sd-2023"],
+  "revocationEndpoint": "https://bank.example/status/",
+  "schemes": ["za-banking-v1"],
+  "validFrom": "2026-01-01T00:00:00Z",
+  "validUntil": "2026-12-31T23:59:59Z"
+}
+```
+
+The entry is embedded in the authority's signed trust list document. TrustOS verifies the authority's signature before accepting any cached or fetched list.
+
+## Issuer trust score
+
+The issuer trust score (0–100) is a signal of how reliably an issuer operates. It is computed and published by the governing authority — TrustOS consumes and enforces it. A higher score means greater trustworthiness; credentials from issuers that fall below a scheme's minimum score are declined for that scheme.
+
+| Input | Effect on score |
+|---|---|
+| Audit history | A recent, clean audit raises the score. An overdue or failed audit lowers it. |
+| Compliance status | `current` compliance supports a high score. `lapsed` compliance lowers it or triggers suspension. |
+| Reported incidents | Confirmed fraud or security incidents lower the score and may trigger suspension. |
+
+<Note>
+  TrustOS may feed incident signals from its fraud graph back to the governing authority, but it does not unilaterally change an issuer's trust score. That decision belongs to the authority.
+</Note>
+
+## Registration
+
+<Steps>
+  <Step title="Register as an issuer">
+    1. Prove control of your `did:web` identifier.
+    2. Publish your DID document and a publicly accessible Bitstring Status List revocation endpoint.
+    3. Declare the schemes you will issue credentials for and the cryptographic suites you support.
+    4. Pass the governing authority's onboarding audit.
+
+    On approval, you receive an initial trust score and your DID is added to the master trust list with `status: approved`.
+  </Step>
+  <Step title="Register as a verifier">
+    1. Prove control of your `did:web` identifier.
+    2. Agree to the platform's terms and data-handling requirements.
+    3. Register your API client credentials — a mutual TLS certificate and an OAuth client.
+
+    On approval, your DID is added to the master trust list and your API credentials are activated. Verification requests from unapproved verifiers are rejected at the API gate and at the wallet.
+  </Step>
+  <Step title="Register as a wallet provider">
+    1. Run your wallet implementation against the OID4VP and OID4VCI conformance test suite.
+    2. Submit the conformance report to the governing authority for review.
+
+    On approval, your wallet is added to the master trust list. Holders using your wallet will be able to interact with any registered verifier on the platform.
+  </Step>
+</Steps>
+
+## Status transitions
+
+Registry entries move through a defined set of states. All transitions are audited and take effect near-immediately via an alert channel — you do not have to wait for the next scheduled cache refresh.
+
+<CardGroup cols={3}>
+  <Card title="Approved" icon="circle-check">
+    The participant is active and can take part in verifications. Credentials from approved issuers are accepted; presentation requests from approved verifiers are accepted by wallets.
+  </Card>
+  <Card title="Suspended" icon="circle-pause">
+    The participant is temporarily barred from participating. Credentials from suspended issuers are declined. Presentation requests from suspended verifiers are rejected. Suspension can be lifted by the governing authority.
+  </Card>
+  <Card title="Revoked" icon="circle-xmark">
+    The participant is permanently removed from the registry. Previously issued credentials from revoked issuers are declined. Revocation cannot be reversed.
+  </Card>
+</CardGroup>
+
+## Failure behaviour
+
+TrustOS is designed to fail closed on trust registry issues for high-assurance scenarios. The table below describes what happens in each failure mode.
+
+| Failure condition | Behaviour |
+|---|---|
+| Trust list unreachable, cache is fresh | TrustOS uses the cached list. Lists are public, signed data — using a fresh cache is the designed behaviour. |
+| Trust list unreachable, cache is stale beyond the grace period | **Fail closed** for high-assurance schemes. Low-assurance schemes may be configured with a longer grace period. |
+| Issuer `did:web` is unresolvable | The credential fails at pipeline step 4 and the result is `Decline`. |
+| Verifier not in registry or not approved | The verification request is rejected with a `403` at the API gate. The holder's wallet also rejects the presentation request independently. |

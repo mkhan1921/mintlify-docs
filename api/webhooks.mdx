@@ -1,0 +1,193 @@
+---
+title: "Webhooks API: Manage Result Delivery Endpoints"
+sidebarTitle: "Webhooks"
+description: "Register, list, and remove HTTPS endpoints that receive signed verification results and lifecycle events without polling."
+---
+
+Webhooks are the preferred way to receive verification results and lifecycle events on TrustOS. Instead of polling `GET /verifications/{id}`, you register an HTTPS endpoint and TrustOS POSTs a signed JSON payload to it as soon as a verification reaches a terminal state. The delivery system is backed by an event queue with automatic retries and exponential backoff, so transient failures on your end do not result in missed events.
+
+Every payload TrustOS delivers is signed with HMAC-SHA256 using the shared secret you provide at registration. You should always verify the `x-trustos-signature` header on incoming requests before processing the payload. Reference the [Webhooks integration guide](#) for sample verification code in multiple languages.
+
+---
+
+## GET /webhooks
+
+List all registered webhook endpoints for your verifier.
+
+### Example request
+
+```bash
+curl https://api.trustos.example/v1/webhooks \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+### Response — 200 OK
+
+```json
+{
+  "webhooks": [
+    {
+      "webhookId": "wh_01J...",
+      "url": "https://yourapp.example/hooks",
+      "events": ["verification.completed", "verification.declined"],
+      "status": "active"
+    }
+  ]
+}
+```
+
+<ResponseField name="webhooks" type="array">
+  The list of all registered webhooks for your verifier.
+
+  <Expandable title="webhook fields">
+    <ResponseField name="webhookId" type="string">
+      Unique identifier for the webhook endpoint.
+    </ResponseField>
+    <ResponseField name="url" type="string">
+      The HTTPS URL that TrustOS delivers payloads to.
+    </ResponseField>
+    <ResponseField name="events" type="array">
+      The event types this webhook is subscribed to.
+    </ResponseField>
+    <ResponseField name="status" type="string">
+      Current status of the webhook: `active` or `disabled`. TrustOS disables a webhook after repeated delivery failures.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## POST /webhooks
+
+Register a new webhook endpoint. TrustOS immediately sends a test ping to the URL to confirm it is reachable.
+
+### Request body
+
+<ParamField body="url" type="string" required>
+  The HTTPS URL of your endpoint. Must be publicly reachable and respond to `POST` requests with a `2xx` status within 10 seconds.
+</ParamField>
+
+<ParamField body="events" type="array" required>
+  One or more event type strings to subscribe to. See the event types table below. Pass `["*"]` to subscribe to all event types.
+</ParamField>
+
+<ParamField body="secret" type="string" required>
+  A secret string used to sign payloads with HMAC-SHA256. Choose a high-entropy random value. TrustOS stores only a hash of this secret — you cannot retrieve it after registration.
+</ParamField>
+
+### Example request
+
+```bash
+curl -X POST https://api.trustos.example/v1/webhooks \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://yourapp.example/hooks",
+    "events": ["verification.completed", "verification.declined"],
+    "secret": "your-high-entropy-secret"
+  }'
+```
+
+### Response — 201 Created
+
+```json
+{
+  "webhookId": "wh_01J...",
+  "url": "https://yourapp.example/hooks",
+  "events": ["verification.completed", "verification.declined"],
+  "status": "active"
+}
+```
+
+<ResponseField name="webhookId" type="string">
+  The unique identifier for the registered webhook. Pass this as `callback.webhookId` when starting a verification to route results to this endpoint.
+</ResponseField>
+
+<ResponseField name="url" type="string">
+  The HTTPS URL as you provided it, confirmed reachable at registration.
+</ResponseField>
+
+<ResponseField name="events" type="array">
+  The event types this webhook is subscribed to.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Always `active` immediately after registration.
+</ResponseField>
+
+---
+
+## DELETE /webhooks/{id}
+
+Remove a registered webhook endpoint. In-flight verifications that reference this webhook via `callback.webhookId` will fall back to a polling-only result model for any events not yet delivered.
+
+### Path parameters
+
+<ParamField path="id" type="string" required>
+  The `webhookId` of the endpoint to remove.
+</ParamField>
+
+### Example request
+
+```bash
+curl -X DELETE https://api.trustos.example/v1/webhooks/wh_01J... \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+### Response — 204 No Content
+
+No body is returned on successful deletion.
+
+---
+
+## Event types
+
+| Event type | When it is delivered |
+|---|---|
+| `verification.completed` | A verification event concluded with `Approve` or `Review`. |
+| `verification.declined` | A verification event concluded with `Decline`. |
+| `verification.expired` | The OID4VP presentation window closed before the holder responded. |
+| `verification.error` | An unexpected error occurred during verification processing. |
+
+---
+
+## Payload signature verification
+
+Every payload TrustOS delivers includes an `x-trustos-signature` header containing the HMAC-SHA256 of the raw request body, hex-encoded, prefixed with `sha256=`.
+
+```
+x-trustos-signature: sha256=<hex-digest>
+```
+
+You should compute the expected signature using your registered secret and compare it to the header value using a constant-time comparison function before processing the payload.
+
+```javascript
+const crypto = require("crypto");
+
+function verifySignature(rawBody, secret, signatureHeader) {
+  const expected = "sha256=" + crypto
+    .createHmac("sha256", secret)
+    .update(rawBody)
+    .digest("hex");
+  return crypto.timingSafeEqual(
+    Buffer.from(expected),
+    Buffer.from(signatureHeader)
+  );
+}
+```
+
+<Warning>
+  Always verify the `x-trustos-signature` header on every incoming webhook payload before acting on it. Failing to verify signatures exposes your application to forged events. Use a constant-time comparison to prevent timing attacks. See the [Webhooks integration guide](#) for complete verification examples in Python, Go, and Java.
+</Warning>
+
+---
+
+## Error responses
+
+| HTTP | `type` | When |
+|---|---|---|
+| 400 | `invalid-request` | Malformed body, non-HTTPS URL, or unknown event type |
+| 401 | `unauthenticated` | Missing or invalid bearer token |
+| 403 | `verifier-not-approved` | Verifier not approved in the Trust Registry |
+| 404 | `not-found` | Unknown `webhookId` |
+| 422 | `endpoint-unreachable` | TrustOS could not reach your URL during the registration ping |

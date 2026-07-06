@@ -1,0 +1,159 @@
+---
+title: "Issuing Verifiable Credentials with TrustOS"
+sidebarTitle: "Issuance"
+description: "How approved issuers — banks, employers, government authorities, and certification bodies — issue W3C Verifiable Credentials via TrustOS OID4VCI."
+---
+
+TrustOS includes an OID4VCI-compliant issuance service for approved issuers. If you are an institution that issues credentials — a bank, employer, government authority, or certification body — this guide covers how to issue credentials that TrustOS verifiers can trust and that holders can carry in any conformant wallet. Every credential you issue participates in the same trust framework: it will carry your verified identity, link to your revocation status list, and be evaluated against your trust score at each verification event.
+
+## Issuer Registration
+
+Before you can issue credentials through TrustOS, you must be registered on the Trust Registry as an approved issuer. Registration is a one-time onboarding process that establishes your identity and cryptographic material within the trust framework.
+
+<Steps>
+  <Step title="Prove control of your DID">
+    You will register a `did:web` DID that represents your organisation as an issuer. You prove control by publishing your DID document at the well-known path on your domain.
+  </Step>
+  <Step title="Publish your DID document">
+    Your DID document must be reachable at `https://yourdomain.example/.well-known/did.json`. It must include your issuer verification method (public key) in the format required by your chosen cryptographic suite.
+  </Step>
+  <Step title="Publish a Bitstring Status List endpoint">
+    You must operate a publicly accessible Bitstring Status List endpoint. This is the revocation mechanism — each credential you issue will carry a `credentialStatus` entry pointing to an index in this list.
+  </Step>
+  <Step title="Declare your supported schemes and suites">
+    Declare which TrustOS schemes you intend to issue credentials for, and which cryptographic suites you will use. Your declared suites must be on the scheme's allowed-suites list.
+  </Step>
+  <Step title="Pass an onboarding audit">
+    TrustOS reviews your registration, confirms your endpoints are reachable, and verifies your DID and status list configuration. On approval, your issuer entry is activated on the Trust Registry with an initial trust score.
+  </Step>
+</Steps>
+
+<Note>
+  Your trust score is established at onboarding and changes over time based on compliance status and any incidents. Verifiers' scheme policies can set a minimum trust score — credentials you issue will only be accepted at verifications where your score meets or exceeds the policy threshold.
+</Note>
+
+## Issuing a Credential (OID4VCI Flow)
+
+Once registered, you issue credentials using the OID4VCI 1.0 protocol. The flow involves your issuer admin system, the TrustOS issuance endpoints, and the holder's wallet.
+
+<Steps>
+  <Step title="Create a credential offer">
+    Your admin system calls the TrustOS issuance API to create a credential offer. This requires your issuer admin token. The offer specifies the credential type, the subject's identifier, and the claims to be included.
+
+    ```bash
+    curl -X POST https://api.trustos.example/v1/credentials/offers \
+      -H 'Authorization: Bearer $ISSUER_ADMIN_TOKEN' \
+      -H 'Content-Type: application/json' \
+      -d '{
+        "credentialType": "Employment",
+        "subjectDid": "did:jwk:...",
+        "claims": {
+          "activeStatus": true,
+          "payrollVerifiedFlag": true
+        }
+      }'
+    ```
+  </Step>
+  <Step title="Wallet receives and fetches the offer">
+    The offer URI is delivered to the holder's wallet (via QR code, deep link, or push notification). The wallet fetches the credential offer metadata from the TrustOS credential endpoint, which includes a `c_nonce` for proof binding.
+  </Step>
+  <Step title="Holder proves key possession">
+    The wallet constructs a proof JWT bound to the `c_nonce` returned by the token endpoint. This proves that the holder controls the private key corresponding to the DID that will be the credential subject.
+  </Step>
+  <Step title="TrustOS signs and issues the credential">
+    TrustOS validates the proof JWT, signs the credential using your KMS-backed issuer key, and returns the signed credential to the wallet. Your private key never enters application memory — all signing is delegated to the KMS.
+  </Step>
+  <Step title="Credential is delivered to the wallet">
+    The wallet stores the signed credential in secure storage. The credential carries a `credentialStatus` entry pointing to your Bitstring Status List so that verifiers can check revocation at any future presentation.
+  </Step>
+</Steps>
+
+## Credential Shape
+
+Every credential issued through TrustOS follows the W3C Verifiable Credentials v2 envelope. Here is a representative example for an employment credential:
+
+```json
+{
+  "@context": [
+    "https://www.w3.org/ns/credentials/v2",
+    "https://trustos.example/contexts/employment/v1"
+  ],
+  "type": ["VerifiableCredential", "Employment"],
+  "issuer": "did:web:payrollco.example",
+  "validFrom": "2026-01-01T00:00:00Z",
+  "validUntil": "2027-01-01T00:00:00Z",
+  "credentialStatus": {
+    "type": "BitstringStatusListEntry",
+    "statusPurpose": "revocation",
+    "statusListIndex": "94567",
+    "statusListCredential": "https://payrollco.example/status/3"
+  },
+  "credentialSubject": {
+    "id": "did:jwk:...",
+    "activeStatus": true,
+    "payrollVerifiedFlag": true
+  }
+}
+```
+
+The `credentialStatus` block is automatically populated by TrustOS with the `statusListIndex` assigned to this credential and the URL of your published status list.
+
+## Supported Cryptographic Suites
+
+TrustOS supports four cryptographic suites for issuance. Choose the suite that best fits your use case and the scheme's requirements.
+
+| Suite | Identifier | When to use |
+|---|---|---|
+| **ECDSA P-256** | `ecdsa-sd-2023` | Primary suite; selective disclosure; FIPS-friendly; most widely supported |
+| **EdDSA Ed25519** | `eddsa-rdfc-2022` | Preferred for mobile-native credentials; faster and smaller signatures |
+| **SD-JWT VC** | `dc+sd-jwt` | Selective disclosure without zero-knowledge; widely deployed across wallet ecosystems |
+| **BBS** | `bbs-2023` | Phase 2; zero-knowledge predicates; unlinkable presentations across verifiers |
+
+<Note>
+  **Phase 1 recommendation:** issue with ECDSA (`ecdsa-sd-2023`) or SD-JWT VC. EdDSA is a strong choice if your credentials are primarily consumed by mobile wallets. BBS is available as a Phase 2 capability when your scheme requires zero-knowledge predicates or unlinkable presentations.
+</Note>
+
+<Tip>
+  The suite is self-describing on every credential. If you ever need to retire a suite, you do not need to re-issue existing credentials — you simply stop issuing new credentials with the old suite and remove it from your declared issuance list. Existing credentials remain verifiable until they expire.
+</Tip>
+
+## Revoking a Credential
+
+To revoke a credential, flip the bit at the credential's `statusListIndex` in your Bitstring Status List. You manage this list directly on your own infrastructure.
+
+```bash
+# Example: update bit 94567 in status list 3 to mark as revoked
+curl -X PATCH https://payrollco.example/status/3 \
+  -H 'Authorization: Bearer $STATUS_LIST_ADMIN_TOKEN' \
+  -d '{"index": 94567, "status": "revoked"}'
+```
+
+TrustOS caches your status list with a configurable TTL and re-fetches it on cache miss. Revocation takes effect at the **next verification event** that checks the status bit — there is no instant push to wallets.
+
+<Warning>
+  There is no way to un-revoke a credential. If a credential was revoked in error, you must issue a replacement credential. Plan your revocation workflow carefully before using it in production.
+</Warning>
+
+## Your Issuer Trust Score
+
+Your trust score (0–100) is displayed to holders on every credential you issue and is evaluated by verifiers' scheme policies at each verification event.
+
+- Policies can set a **minimum trust score** threshold. If your score falls below a policy's threshold, presentations of your credentials at that verifier will fail pipeline step 4 (issuer trust), even if the credential itself is cryptographically valid.
+- Your score is maintained by keeping your compliance status current, ensuring your DID document and status list endpoints remain reachable, and avoiding incidents that result in a formal trust review.
+
+## Publishing to the Marketplace
+
+Once your credential type is live, publish your credential schema and context URL to the TrustOS Marketplace. This makes your credential type discoverable so verifiers can include it in their policies.
+
+<Tip>
+  Use the Marketplace to publish **sharing templates** for your credential type. A sharing template is a pre-configured policy that verifiers can apply with a single click — defining which claims to request, what purpose string to display, and which assurance level is required. Templates accelerate adoption of your credential type by reducing the configuration burden on verifiers.
+</Tip>
+
+<CardGroup cols={2}>
+  <Card title="Publish a schema" icon="code">
+    Register your credential type schema and `@context` URL so the wallet can display human-readable claim labels to holders during disclosure.
+  </Card>
+  <Card title="Create sharing templates" icon="share-nodes">
+    Define recommended verifier policies for your credential type and publish them to the Marketplace for verifiers to discover and apply.
+  </Card>
+</CardGroup>

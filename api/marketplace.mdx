@@ -1,0 +1,185 @@
+---
+title: "Marketplace API: Browse Credential Types"
+sidebarTitle: "Marketplace"
+description: "Search and browse published credential types and compute templates to discover schemas, issuers, assurance levels, and available scoring models."
+---
+
+The Marketplace is TrustOS's discoverable catalogue of credential types and compute templates. You use it to find the right credential types for your policy, learn what claims each type proves, review the issuer's trust score and registry status, and seed a new policy directly from an entry. Issuers publish new credential types here; compute template authors publish scoring and derivation models alongside them.
+
+The Marketplace stores descriptors and pointers — schema URLs, context URLs, issuer DIDs, and compute manifest references. It never contains credential values, claim data, or model artifacts. Trust-registry-derived fields such as `trustRegistryStatus` and `issuerTrustScore` are projections refreshed from the Trust Registry; the Marketplace is not the authoritative source for trust status.
+
+---
+
+## GET /marketplace
+
+Browse or search the catalogue. Results include both credential type entries and compute template entries. Use the `kind` filter to restrict to one type.
+
+### Query parameters
+
+<ParamField query="kind" type="string">
+  Filter by entry type. One of: `credentialType`, `computeTemplate`. If omitted, both kinds are returned.
+</ParamField>
+
+<ParamField query="type" type="string">
+  Filter credential type entries by type name, e.g. `"Employment"` or `"TaxKey"`.
+</ParamField>
+
+<ParamField query="search" type="string">
+  Free-text search across entry names, claim descriptions, and purpose fields.
+</ParamField>
+
+<ParamField query="cursor" type="string">
+  Opaque pagination cursor from the previous response's `nextCursor` field.
+</ParamField>
+
+<ParamField query="limit" type="integer">
+  Maximum number of entries to return. Defaults to `20`, capped at `100`.
+</ParamField>
+
+### Example request
+
+```bash
+curl "https://api.trustos.example/v1/marketplace?kind=credentialType&type=Employment" \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+### Response — 200 OK
+
+```json
+{
+  "entries": [
+    {
+      "entryId": "mkt_01J...",
+      "kind": "credentialType",
+      "type": "Employment",
+      "schemaUrl": "https://trustos.example/schemas/employment/v1.json",
+      "contextUrl": "https://trustos.example/contexts/employment/v1",
+      "issuerDid": "did:web:payrollco.example",
+      "trustRegistryStatus": "approved",
+      "issuerTrustScore": 91,
+      "minAssurance": 2,
+      "supportedSuites": ["ecdsa-sd-2023", "eddsa-rdfc-2022"],
+      "claims": [
+        {
+          "path": "activeStatus",
+          "proves": "currently employed"
+        },
+        {
+          "path": "payrollVerifiedFlag",
+          "proves": "income source payroll-verified"
+        }
+      ],
+      "revocationEndpoint": "https://payrollco.example/status/",
+      "computeTemplates": ["tmpl_income_band"]
+    },
+    {
+      "entryId": "mkt_02J...",
+      "kind": "computeTemplate",
+      "templateId": "tmpl_income_band",
+      "purpose": "Map verified employment and bank standing to an income band",
+      "inputs": [
+        "Employment.payrollVerifiedFlag",
+        "BankKey.accountStanding"
+      ],
+      "outputSchema": {
+        "band": { "enum": ["low", "medium", "high"] }
+      },
+      "computeManifestRef": "mft_income_band_v2",
+      "publisherDid": "did:web:scoringco.example"
+    }
+  ],
+  "nextCursor": null,
+  "hasMore": false
+}
+```
+
+<ResponseField name="entries" type="array">
+  The list of marketplace entries matching the query.
+
+  <Expandable title="Credential type entry fields">
+    <ResponseField name="entryId" type="string">
+      Unique identifier for this marketplace entry.
+    </ResponseField>
+    <ResponseField name="kind" type="string">
+      Always `"credentialType"` for credential entries.
+    </ResponseField>
+    <ResponseField name="type" type="string">
+      The credential type name used in policy `requiredCredentials`.
+    </ResponseField>
+    <ResponseField name="schemaUrl" type="string">
+      URL of the JSON Schema document defining the credential's structure.
+    </ResponseField>
+    <ResponseField name="contextUrl" type="string">
+      URL of the JSON-LD context for this credential type.
+    </ResponseField>
+    <ResponseField name="issuerDid" type="string">
+      DID of the issuing organisation for this credential type.
+    </ResponseField>
+    <ResponseField name="trustRegistryStatus" type="string">
+      Current Trust Registry status of the issuer, e.g. `"approved"` or `"suspended"`. Refreshed from the Trust Registry.
+    </ResponseField>
+    <ResponseField name="issuerTrustScore" type="number">
+      Numeric trust score (0–100) assigned to the issuer by the Trust Registry.
+    </ResponseField>
+    <ResponseField name="minAssurance" type="integer">
+      The minimum assurance level (1–4) at which this credential type is issued.
+    </ResponseField>
+    <ResponseField name="supportedSuites" type="array">
+      Cryptographic suite identifiers supported by this issuer for this credential type.
+    </ResponseField>
+    <ResponseField name="claims" type="array">
+      Descriptive list of claim fields available on this credential type, each with a `path` and a `proves` description.
+    </ResponseField>
+    <ResponseField name="revocationEndpoint" type="string">
+      Base URL of the issuer's revocation status service.
+    </ResponseField>
+    <ResponseField name="computeTemplates" type="array">
+      IDs of compute templates that accept this credential type as an input.
+    </ResponseField>
+  </Expandable>
+
+  <Expandable title="Compute template entry fields">
+    <ResponseField name="entryId" type="string">
+      Unique identifier for this marketplace entry.
+    </ResponseField>
+    <ResponseField name="kind" type="string">
+      Always `"computeTemplate"` for compute template entries.
+    </ResponseField>
+    <ResponseField name="templateId" type="string">
+      ID of the compute template, referenced in policies and manifest registrations.
+    </ResponseField>
+    <ResponseField name="purpose" type="string">
+      Human-readable description of what the template computes.
+    </ResponseField>
+    <ResponseField name="inputs" type="array">
+      Claim paths the template reads, in `"CredentialType.claimName"` format.
+    </ResponseField>
+    <ResponseField name="outputSchema" type="object">
+      JSON Schema for the compute output produced by this template.
+    </ResponseField>
+    <ResponseField name="computeManifestRef" type="string">
+      The registered compute manifest ID backing this template.
+    </ResponseField>
+    <ResponseField name="publisherDid" type="string">
+      DID of the organisation that published this compute template.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="nextCursor" type="string | null">
+  Opaque cursor to retrieve the next page of results. `null` when you have reached the last page.
+</ResponseField>
+
+<ResponseField name="hasMore" type="boolean">
+  `true` if there are additional entries beyond the current page.
+</ResponseField>
+
+---
+
+## Error responses
+
+| HTTP | `type` | When |
+|---|---|---|
+| 400 | `invalid-request` | Invalid query parameter values |
+| 401 | `unauthenticated` | Missing or invalid bearer token |
+| 429 | `rate-limited` | Query quota exceeded |

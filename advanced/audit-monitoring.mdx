@@ -1,0 +1,121 @@
+---
+title: "Audit Trail and Lifecycle Monitoring in TrustOS"
+sidebarTitle: "Audit & Monitoring"
+description: "Query TrustOS's immutable audit trail and configure lifecycle monitoring to watch for credential expiry, revocation, and status changes."
+---
+
+TrustOS maintains an immutable audit trail of every verification event, consent grant, policy change, and compute run. The audit answers four questions for every event: who requested, what was requested, what was shared, and when. Alongside the audit trail, lifecycle monitoring watches continuously for credential expiry, revocation, and issuer trust changes — and can trigger automated re-verification when those changes occur, provided the holder has granted standing consent.
+
+## What Is Logged
+
+TrustOS logs enough to be fully accountable without ever recording the raw credential values that would turn the audit log into a surveillance database.
+
+| Logged | Never logged |
+|---|---|
+| Verification result (`Approve` / `Decline` / `Review`) and scores | Raw credential claim values |
+| Requested and disclosed claim names and claim-value hashes | Claim values, biometrics |
+| Verifier DID, policy ID, proxy reference, pseudonymous holder reference | PII linking the holder reference to an identity |
+| Consent grants and revocations | Model internals from Confidential Compute runs |
+| Compute runs: requester, manifest ID, model hash, output digest, timestamp | Compute inputs (claims) and model plaintext |
+| Trust, policy, and registration state changes with actor and diff | — |
+
+The audit schema has no raw-claim column. The privacy guarantee is structural, not a matter of discipline.
+
+## Immutability Guarantees
+
+The audit trail uses three independent mechanisms to ensure records cannot be altered or deleted.
+
+<CardGroup cols={3}>
+  <Card title="Hash chaining" icon="link">
+    Each event record includes the SHA-256 hash of the previous record. Any retroactive edit breaks the chain and is immediately detectable.
+  </Card>
+  <Card title="Object Lock (Compliance mode)" icon="lock">
+    Audit records are written to object storage with a Compliance-mode lock. No one — including administrators — can delete or overwrite a record until the retention period expires.
+  </Card>
+  <Card title="Daily checkpoint" icon="calendar-check">
+    A daily process publishes the current chain-head hash as a tamper-evidence anchor. Even within the retention window, any retroactive edit produces a detectable mismatch against the published checkpoint.
+  </Card>
+</CardGroup>
+
+The default retention period is **7 years**, configurable per scheme or regulatory requirement via the Object Lock retention setting.
+
+## Querying the Audit Log
+
+Use `GET /audit` with cursor-based pagination to retrieve events. You can filter by verifier DID, policy, outcome, event type, or time range.
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X GET 'https://api.trustos.example/v1/audit?limit=50' \
+      -H 'Authorization: Bearer $TOKEN'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "events": [
+        {
+          "eventId": "aud_01J...",
+          "type": "verification_completed",
+          "verifierDid": "did:web:lender.example",
+          "policyId": "pol_01J...",
+          "outcome": "Approve",
+          "proxy": "px_9f3...",
+          "timestamp": "2026-06-24T10:03:11Z"
+        }
+      ],
+      "nextCursor": "cursor_abc..."
+    }
+    ```
+  </Tab>
+  <Tab title="Filtered request">
+    ```bash
+    curl -X GET \
+      'https://api.trustos.example/v1/audit?outcome=Review&after=2026-06-01T00:00:00Z&limit=100' \
+      -H 'Authorization: Bearer $TOKEN'
+    ```
+  </Tab>
+</Tabs>
+
+Pass the `nextCursor` value from each response as the `cursor` query parameter to retrieve the next page of results.
+
+## Holder-Visible Trail
+
+Holders can inspect their own audit trail directly from the wallet. They see which verifier requested, which claim names were disclosed (names only, never values), when the event occurred, and the result category (`Approve`, `Decline`, or `Review`). This gives holders meaningful transparency into how their credentials have been used without exposing any information about your policy logic or model internals.
+
+## Lifecycle Monitoring
+
+Lifecycle monitoring watches for changes to credentials and issuers that may affect verifications you have already completed or standing consents you hold.
+
+<Steps>
+  <Step title="The monitoring service watches for triggering events">
+    TrustOS continuously polls issuer status lists and listens for Trust Registry signals to detect:
+    - A credential's `validUntil` date falling within the configured lead-time window
+    - A revocation status bit being flipped for a credential
+    - An issuer's trust score dropping below the scheme minimum
+    - A new policy version raising the minimum requirements for a credential type
+  </Step>
+  <Step title="Notifications are dispatched to holders and verifiers">
+    When a trigger fires, TrustOS notifies the affected holder via push notification or USSD so they can renew proactively. The affected verifier is also alerted via the same webhook channel used for standard verification results.
+  </Step>
+  <Step title="Automated re-verification runs if standing consent exists">
+    If the holder has previously granted standing consent for the affected verifier, TrustOS runs the full verification pipeline automatically — resolving the current credential state against your policy — and delivers the new result to you via webhook. No new holder interaction is required.
+  </Step>
+</Steps>
+
+## Monitoring Events Reference
+
+| Event | Trigger | Default action |
+|---|---|---|
+| `credential_expiry_approaching` | `validUntil` falls within the configured lead time | Notify holder to prompt renewal; alert verifier |
+| `credential_revoked` | Revocation status bit flipped by the issuer | Notify holder and verifier; run automated re-verification if standing consent exists |
+| `issuer_trust_score_dropped` | Issuer trust score falls below the scheme minimum | Alert affected verifiers; block new verifications for that issuer until resolved |
+| `policy_minimum_raised` | New policy version published with higher requirements | Enforced from the next event forward — never applied retroactively |
+
+<Note>
+  Automated re-verification requires standing consent from the holder. Without standing consent, TrustOS alerts you and the holder but waits for a fresh presentation before running the verification pipeline again.
+</Note>
+
+## Retention
+
+The default audit retention period is 7 years. Your scheme administrator can configure a different retention period — for example to match a specific regulatory requirement — by adjusting the Object Lock retention setting. Once set, the retention period cannot be shortened: records are guaranteed to exist and be unmodified for the full period.

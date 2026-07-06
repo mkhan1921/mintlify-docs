@@ -1,0 +1,101 @@
+---
+title: "Fraud Signals and Risk Scoring in TrustOS"
+sidebarTitle: "Fraud Signals"
+description: "Understand how TrustOS computes fraud scores and risk flags for every verification event, and how to use them effectively in your policies."
+---
+
+TrustOS computes a fraud score for every verification event using a combination of network-level graph signals and per-presentation device and credential signals. That score is fed directly into the Decision Engine — your policy can route high-score events to `Review` instead of `Approve` so that a human can investigate before a decision is made final. The `fraudScore` and `riskFlags` fields in your verification result give you a transparent, explainable view of exactly which signals fired and why.
+
+## What the Fraud Graph Detects
+
+The underlying signal source is a network-level graph of pseudonymous entity relationships. Because fraud is relational — rings share devices, phone numbers, and identifiers across many otherwise-unrelated presentations — a graph-traversal approach catches patterns that simple per-event checks miss.
+
+| Signal | What it detects |
+|---|---|
+| **Ring fraud** | Multiple entities sharing devices, proxies, or phone numbers in patterns consistent with a fraud ring |
+| **Velocity anomalies** | Unusually high frequency of verification attempts from an entity within a sliding time window |
+| **Credential anomalies** | A known credential presented from a device or DID that has never been seen before, or from implausible geography |
+| **SIM-swap signals** | A recent SIM swap on the MSISDN bound to the holder, as reported by the telco credential issuer |
+| **Issuer safety indicators** | A risk flag embedded in the credential by the issuer at the time of issuance |
+| **Known fraud signals** | A fraud signal embedded in the credential (for example `BankKey.fraudSignal`) or a Trust Registry incident flag |
+
+## Privacy Design
+
+The fraud graph stores only pseudonymous identifiers and network edges — never raw credential claim values. Device fingerprints are hashed before storage. The graph can answer "is this pattern suspicious?" but it cannot answer "who is this person?" because it deliberately holds no identity. Re-identification would require joining with data TrustOS does not retain.
+
+## The fraudScore in Your Result
+
+Every verification result includes a `fraudScore` between `0.0` (no signals detected) and `1.0` (high confidence of fraud risk). The score is a weighted, deterministic combination of the graph signals, device signals, and credential signals that fired for the event. It is reproducible and auditable — the same inputs always produce the same score.
+
+Your policy's `reviewWhen` predicate can reference the fraud score directly:
+
+```json
+{
+  "decision": {
+    "reviewWhen": ["fraudScore>0.6"],
+    "declineWhen": ["anyRevoked", "anyExpired"]
+  }
+}
+```
+
+<Tip>
+  Use `reviewWhen` rather than `declineWhen` for fraud score thresholds. Routing to `Review` sends the event to human investigation instead of automatically declining a holder who may be legitimate. Reserve `declineWhen` for hard, objective disqualifiers like revoked or expired credentials.
+</Tip>
+
+## The riskFlags Array
+
+Alongside the scalar `fraudScore`, the result includes a `riskFlags` array. Each flag names the signal that fired and its source, so you have a readable explanation for every elevated score.
+
+<AccordionGroup>
+  <Accordion title="ISSUER_SAFETY_INDICATOR">
+    The credential's issuer embedded a risk flag at issuance time. This signal comes directly from the credential itself and is surfaced as-is.
+  </Accordion>
+  <Accordion title="CREDENTIAL_VELOCITY_HIGH">
+    The credential has been presented an unusually high number of times within a recent sliding window. This may indicate the credential is being shared or replayed across multiple sessions.
+  </Accordion>
+  <Accordion title="SIM_SWAP_RECENT">
+    A recent SIM swap was detected on the phone number (MSISDN) bound to the holder. This signal is sourced from the telco credential issuer or an out-of-band telco signal feed.
+  </Accordion>
+  <Accordion title="GRAPH_RING_SIGNAL">
+    A network-level ring pattern was detected. The entities associated with this presentation are within proximity of a flagged incident or share identifiers with other flagged entities in the fraud graph.
+  </Accordion>
+</AccordionGroup>
+
+The `riskFlags` array in a verification result looks like this:
+
+```json
+{
+  "outcome": "Review",
+  "fraudScore": 0.74,
+  "riskFlags": [
+    { "signal": "GRAPH_RING_SIGNAL", "source": "fraud-graph" },
+    { "signal": "SIM_SWAP_RECENT", "source": "telco-credential" }
+  ],
+  "reasons": ["fraudScore>0.6"]
+}
+```
+
+## Using Fraud Signals in Your Policy
+
+<CardGroup cols={2}>
+  <Card title="Route by score" icon="arrow-right-arrow-left">
+    Use `reviewWhen: ["fraudScore>0.6"]` to send medium-confidence events to a human review queue while letting low-score events proceed automatically.
+  </Card>
+  <Card title="Combine with hard rules" icon="shield-check">
+    Combine `fraudScore` predicates with hard disqualifiers. A credential can be unflagged by the graph but still revoked — always include `declineWhen: ["anyRevoked"]` alongside your score threshold.
+  </Card>
+  <Card title="Inspect riskFlags" icon="flag">
+    Use `riskFlags` in your review UI to give human reviewers a plain-language explanation of why an event was escalated, making appeals easier to handle.
+  </Card>
+  <Card title="Scheme-level weights" icon="sliders">
+    The weights applied to each signal category are configurable per scheme. Contact your TrustOS scheme administrator to tune signal sensitivity for your industry or risk appetite.
+  </Card>
+</CardGroup>
+
+## Lifecycle Monitoring and Re-Verification
+
+The fraud graph also powers automated re-verification triggers. If a holder's fraud signal changes materially after a standing consent was granted — for example, a ring signal appears after the initial verification — the lifecycle monitoring service can trigger an automated re-check and deliver the new result to you via webhook. See [Audit & Monitoring](/advanced/audit-monitoring) for details on standing consent and automated re-verification.
+
+<Note>
+  Contributing signals are always included in the audit record for any `Review` or `Decline` outcome driven by fraud scoring. This ensures that every fraud-influenced decision is auditable and can be challenged if needed.
+</Note>

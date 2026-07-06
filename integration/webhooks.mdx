@@ -1,0 +1,221 @@
+---
+title: "Receive Verification Results via Webhooks"
+sidebarTitle: "Webhooks"
+description: "Register a webhook endpoint, verify signed payloads, handle all verification event types, and configure automatic retry for reliable result delivery."
+---
+
+TrustOS delivers verification results asynchronously to your webhook endpoint. Using webhooks is recommended over polling — your endpoint receives a signed payload as soon as a verification completes, with automatic retry on failure. This means your application can react to outcomes in near-real-time without the overhead of continuously checking the API for updates.
+
+## Register a Webhook
+
+Call `POST /webhooks` to register your endpoint. You specify which events you want to receive and a signing secret that TrustOS uses to sign every payload it sends to you.
+
+```bash
+curl -X POST https://api.trustos.example/v1/webhooks \
+  -H 'Authorization: Bearer $TOKEN' \
+  --cert client.crt --key client.key \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "url": "https://yourapp.example/webhooks/trustos",
+    "events": [
+      "verification.completed",
+      "verification.declined",
+      "verification.expired"
+    ],
+    "secret": "your-webhook-signing-secret"
+  }'
+```
+
+A successful registration returns your webhook ID and confirms the endpoint is active:
+
+```json
+{
+  "webhookId": "wh_01J...",
+  "status": "active"
+}
+```
+
+Store the `webhookId` — you reference it when starting verifications so that TrustOS knows where to send the result.
+
+## Webhook Payload
+
+When a verification completes, TrustOS sends an HTTP POST to your registered URL with a JSON payload containing the outcome, scores, and a pseudonymous proxy identifier. The payload never contains raw credential claims.
+
+```json
+{
+  "event": "verification.completed",
+  "transactionId": "evt_01J...",
+  "result": {
+    "outcome": "Approve",
+    "riskScore": 0.12,
+    "trustScore": 88,
+    "riskFlags": [],
+    "proxy": "px_9f3...",
+    "reasons": ["all required credentials valid and policy met"]
+  },
+  "completedAt": "2026-06-24T10:03:11Z",
+  "signature": "sha256=abc..."
+}
+```
+
+<ResponseField name="event" type="string" required>
+  The event type. See the [Event Types](#event-types) section below.
+</ResponseField>
+
+<ResponseField name="transactionId" type="string" required>
+  The verification transaction ID, matching the `transactionId` returned when you started the verification.
+</ResponseField>
+
+<ResponseField name="result.outcome" type="string" required>
+  The verification decision: `Approve`, `Decline`, or `Review`.
+</ResponseField>
+
+<ResponseField name="result.riskScore" type="number">
+  A risk score from 0.0 (lowest risk) to 1.0 (highest risk).
+</ResponseField>
+
+<ResponseField name="result.trustScore" type="number">
+  An aggregated trust score across the presented credentials (0–100).
+</ResponseField>
+
+<ResponseField name="result.riskFlags" type="array">
+  An array of string flags describing any risk signals detected during verification.
+</ResponseField>
+
+<ResponseField name="result.proxy" type="string">
+  A pseudonymous, stable, per-scheme identifier for the subject. Use this to recognize a returning user without storing PII.
+</ResponseField>
+
+<ResponseField name="result.reasons" type="array">
+  Human-readable explanations for the decision.
+</ResponseField>
+
+<ResponseField name="completedAt" type="string">
+  ISO-8601 timestamp when the verification pipeline completed.
+</ResponseField>
+
+<ResponseField name="signature" type="string">
+  HMAC-SHA256 signature of the raw request body, in the format `sha256=<hex>`. Always verify this before processing the payload.
+</ResponseField>
+
+## Verifying the Signature
+
+<Warning>
+  Always verify the `X-TrustOS-Signature` header before processing webhook payloads. An endpoint that skips verification could process forged results, potentially approving transactions that TrustOS actually declined.
+</Warning>
+
+TrustOS signs every webhook payload using HMAC-SHA256 with the secret you provided during registration. Compute the expected signature from the raw request body and compare it to the header value using a constant-time comparison to prevent timing attacks.
+
+```typescript
+import { createHmac, timingSafeEqual } from 'crypto';
+
+function verifyWebhookSignature(
+  payload: string,
+  signature: string,
+  secret: string
+): boolean {
+  const expected = createHmac('sha256', secret)
+    .update(payload)
+    .digest('hex');
+
+  const expectedBuffer = Buffer.from(`sha256=${expected}`, 'utf8');
+  const actualBuffer = Buffer.from(signature, 'utf8');
+
+  // Use constant-time comparison to prevent timing attacks
+  if (expectedBuffer.length !== actualBuffer.length) return false;
+  return timingSafeEqual(expectedBuffer, actualBuffer);
+}
+
+// In your Express handler:
+app.post('/webhooks/trustos', (req, res) => {
+  const sig = req.headers['x-trustos-signature'] as string;
+
+  if (!verifyWebhookSignature(req.rawBody, sig, process.env.WEBHOOK_SECRET!)) {
+    return res.status(401).send('Invalid signature');
+  }
+
+  const event = req.body;
+
+  switch (event.result?.outcome) {
+    case 'Approve':
+      // Proceed with the transaction
+      break;
+    case 'Decline':
+      // Handle the decline
+      break;
+    case 'Review':
+      // Route to case management
+      break;
+  }
+
+  // Acknowledge receipt — TrustOS stops retrying on 2xx
+  res.status(200).send();
+});
+```
+
+<Note>
+  Use `req.rawBody` (the unparsed request body bytes) for signature verification, not a re-serialized version of the parsed JSON. Re-serialization can change whitespace or key ordering and will cause signature verification to fail on valid payloads.
+</Note>
+
+## Retry Behavior
+
+If your endpoint returns a non-2xx status code, or does not respond within the timeout window, TrustOS retries the delivery with exponential backoff. Return HTTP `200` as quickly as possible — do any heavy processing asynchronously after acknowledging receipt.
+
+| Attempt | Delay |
+| --- | --- |
+| 1st retry | ~30 seconds |
+| 2nd retry | ~2 minutes |
+| 3rd retry | ~10 minutes |
+| 4th retry | ~1 hour |
+| Final retry | ~6 hours |
+
+After all retries are exhausted, the delivery is marked as failed. You can inspect failed deliveries in the audit log (`GET /audit`) and replay them manually if needed.
+
+## Event Types
+
+| Event | When it fires |
+| --- | --- |
+| `verification.completed` | Verification finished with outcome `Approve`, `Decline`, or `Review` |
+| `verification.declined` | Also sent as `completed` with `outcome=Decline` for convenience; subscribe to either or both |
+| `verification.expired` | The holder did not complete the presentation before the OID4VP session expired |
+| `verification.error` | A platform-side error prevented the pipeline from completing; check `traceId` for support |
+
+<Note>
+  `verification.declined` is a convenience alias — the same event is always also delivered as `verification.completed` with `outcome: "Decline"`. If you subscribe to both, your handler will receive two calls for each decline. Subscribe to `verification.completed` alone if you want a single callback for all terminal outcomes.
+</Note>
+
+## Referencing a Webhook from a Verification
+
+Pass your `webhookId` in the `callback` field when starting a verification. TrustOS delivers the result to that specific endpoint when the verification completes.
+
+```json
+{
+  "policyId": "pol_01J...",
+  "channel": "qr",
+  "callback": {
+    "webhookId": "wh_01J..."
+  }
+}
+```
+
+If you omit `callback`, TrustOS delivers the result to your default webhook (if one is configured), or the result is only available via polling.
+
+## Managing Webhooks
+
+```bash
+# List all registered webhooks
+GET /webhooks
+
+# Inspect a specific webhook
+GET /webhooks/wh_01J...
+
+# Update the URL or subscribed events
+PUT /webhooks/wh_01J...
+
+# Deactivate a webhook
+DELETE /webhooks/wh_01J...
+```
+
+<Tip>
+  Register separate webhooks for different environments (sandbox and production) with different signing secrets. Never share webhook secrets between environments.
+</Tip>

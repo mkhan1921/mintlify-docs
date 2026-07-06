@@ -1,0 +1,207 @@
+---
+title: "Consent API: Manage Holder Consent Records"
+sidebarTitle: "Consent"
+description: "List, grant, and revoke holder consent records that control which verifiers may present credential requests and under what scope."
+---
+
+The Consent API is holder-scoped: requests are authenticated with the holder's wallet or app credentials, not with verifier credentials. It gives holders a durable, auditable record of every consent they have granted, the scope of each grant, and the ability to revoke any standing consent immediately.
+
+Two consent modes exist. Per-presentation consent is captured implicitly during a wallet interaction and lasts for exactly one verification event. Standing consent is granted explicitly through this API and remains active until it expires or is revoked — it is what makes automated re-verification and monitoring flows lawful. A verifier may only initiate a standing re-check if an active standing consent record exists for that holder–verifier pair.
+
+---
+
+## GET /consent
+
+List all active and historical consent records for the authenticated holder, together with the verification events that relied on each record.
+
+### Query parameters
+
+<ParamField query="cursor" type="string">
+  Opaque pagination cursor from the previous response's `nextCursor` field.
+</ParamField>
+
+<ParamField query="limit" type="integer">
+  Maximum number of records to return. Defaults to `20`, capped at `100`.
+</ParamField>
+
+### Example request
+
+```bash
+curl https://api.trustos.example/v1/consent \
+  -H "Authorization: Bearer $HOLDER_ACCESS_TOKEN"
+```
+
+### Response — 200 OK
+
+```json
+{
+  "records": [
+    {
+      "consentId": "cs_01J...",
+      "verifierDid": "did:web:landlord.example",
+      "scope": {
+        "credentialTypes": ["TaxKey"],
+        "claims": ["goodStandingFlag"],
+        "purpose": "tenancy monitoring"
+      },
+      "mode": "standing",
+      "grantedAt": "2026-06-01T10:00:00Z",
+      "expiresAt": "2027-06-01T10:00:00Z",
+      "revokedAt": null
+    }
+  ],
+  "nextCursor": null,
+  "hasMore": false
+}
+```
+
+<ResponseField name="records" type="array">
+  The list of consent records matching the query.
+
+  <Expandable title="consent record fields">
+    <ResponseField name="consentId" type="string">
+      Unique identifier for this consent record.
+    </ResponseField>
+    <ResponseField name="verifierDid" type="string">
+      The DID of the verifier to whom consent was granted.
+    </ResponseField>
+    <ResponseField name="scope" type="object">
+      The exact scope of the consent grant.
+
+      <Expandable title="scope fields">
+        <ResponseField name="credentialTypes" type="array">
+          The credential types covered by this consent.
+        </ResponseField>
+        <ResponseField name="claims" type="array">
+          The claim field names (never values) that this consent covers.
+        </ResponseField>
+        <ResponseField name="purpose" type="string">
+          The stated purpose for which the verifier requested consent, e.g. `"tenancy monitoring"`.
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    <ResponseField name="mode" type="string">
+      Either `per_presentation` (single-use) or `standing` (recurring).
+    </ResponseField>
+    <ResponseField name="grantedAt" type="string">
+      ISO-8601 timestamp of when the holder granted this consent.
+    </ResponseField>
+    <ResponseField name="expiresAt" type="string | null">
+      ISO-8601 timestamp after which standing consent automatically expires. `null` for per-presentation records or unlimited standing consents.
+    </ResponseField>
+    <ResponseField name="revokedAt" type="string | null">
+      ISO-8601 timestamp of revocation. `null` if the consent has not been revoked.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## POST /consent
+
+Grant standing consent to a specific verifier for a defined scope and purpose. Use this endpoint when you want to allow a verifier to re-verify your credentials automatically — for example, a landlord checking your tax standing on a monthly basis.
+
+### Request body
+
+<ParamField body="verifierDid" type="string" required>
+  The DID of the verifier you are granting consent to, e.g. `"did:web:landlord.example"`. The verifier must be approved in the Trust Registry.
+</ParamField>
+
+<ParamField body="scope" type="object" required>
+  The set of credential types, claim names, and purpose that defines the boundary of this consent.
+
+  <Expandable title="scope fields">
+    <ParamField body="credentialTypes" type="array" required>
+      One or more credential type names covered by this consent.
+    </ParamField>
+    <ParamField body="claims" type="array" required>
+      The claim field names you are authorising the verifier to request.
+    </ParamField>
+    <ParamField body="purpose" type="string" required>
+      A human-readable description of why the verifier needs access, e.g. `"tenancy monitoring"`.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="mode" type="string" required>
+  Either `per_presentation` for a single-use grant, or `standing` for a recurring grant that persists until it expires or is revoked.
+</ParamField>
+
+<ParamField body="expiresAt" type="string">
+  ISO-8601 expiry timestamp for a standing consent. If omitted, the standing consent does not expire automatically. Ignored for `per_presentation` mode.
+</ParamField>
+
+### Example request
+
+```bash
+curl -X POST https://api.trustos.example/v1/consent \
+  -H "Authorization: Bearer $HOLDER_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "verifierDid": "did:web:landlord.example",
+    "scope": {
+      "credentialTypes": ["TaxKey"],
+      "claims": ["goodStandingFlag"],
+      "purpose": "tenancy monitoring"
+    },
+    "mode": "standing",
+    "expiresAt": "2027-06-01T10:00:00Z"
+  }'
+```
+
+### Response — 201 Created
+
+```json
+{
+  "consentId": "cs_01J...",
+  "verifierDid": "did:web:landlord.example",
+  "scope": {
+    "credentialTypes": ["TaxKey"],
+    "claims": ["goodStandingFlag"],
+    "purpose": "tenancy monitoring"
+  },
+  "mode": "standing",
+  "grantedAt": "2026-06-01T10:00:00Z",
+  "expiresAt": "2027-06-01T10:00:00Z",
+  "revokedAt": null
+}
+```
+
+---
+
+## DELETE /consent/{id}
+
+Revoke an existing consent record immediately. The revocation is recorded in the immutable audit log.
+
+### Path parameters
+
+<ParamField path="id" type="string" required>
+  The `consentId` of the record to revoke.
+</ParamField>
+
+### Example request
+
+```bash
+curl -X DELETE https://api.trustos.example/v1/consent/cs_01J... \
+  -H "Authorization: Bearer $HOLDER_ACCESS_TOKEN"
+```
+
+### Response — 204 No Content
+
+No body is returned on successful revocation.
+
+<Warning>
+  Revocation is immediate and irreversible through this API. The next re-verification attempt by the revoked verifier will fail at the consent resolution step before any credential presentation is requested. If you later want to re-enable access, you must create a new consent record with `POST /consent`.
+</Warning>
+
+---
+
+## Error responses
+
+| HTTP | `type` | When |
+|---|---|---|
+| 400 | `invalid-request` | Malformed body or unsupported scope |
+| 401 | `unauthenticated` | Missing or invalid holder token |
+| 403 | `forbidden` | Consent record belongs to a different holder |
+| 404 | `not-found` | Unknown `consentId` |
+| 422 | `verifier-not-approved` | The target verifier DID is not in the Trust Registry |

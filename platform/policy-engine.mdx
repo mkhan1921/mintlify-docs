@@ -1,0 +1,189 @@
+---
+title: "Configure Verification Policies in TrustOS"
+sidebarTitle: "Policy Engine"
+description: "Learn how to define policies that control which credentials, assurance levels, and claims a verification must satisfy to produce an outcome."
+---
+
+A policy is the JSON configuration object that makes TrustOS's "one pipeline, many use cases" design real for your integration. You define which credential types, assurance levels, and claims a verification must satisfy — and the policy drives both the presentation request sent to the holder's wallet and the evaluation that runs after the holder responds. The same verification pipeline handles a simple identity check and a multi-credential affordability assessment; the policy is the only thing that differs between them.
+
+## Policy shape
+
+The following example shows a policy for an unsecured personal loan affordability check. It requires four credential types, sets assurance minimums, restricts the allowed cryptographic suites, and configures how results map to outcomes.
+
+```json
+{
+  "policyId": "uuid",
+  "name": "Unsecured personal loan — affordability",
+  "requiredCredentials": [
+    {
+      "type": "Identity",
+      "minAssurance": 3,
+      "requiredClaims": ["fullName", "idNumber"],
+      "optionalClaims": ["photoHash"]
+    },
+    {
+      "type": "Employment",
+      "minAssurance": 2,
+      "requiredClaims": ["activeStatus", "payrollVerifiedFlag"]
+    },
+    {
+      "type": "BankKey",
+      "minAssurance": 2,
+      "requiredClaims": ["accountStanding", "fraudSignal"]
+    },
+    {
+      "type": "TaxKey",
+      "minAssurance": 2,
+      "requiredClaims": ["goodStandingFlag", "taxStatus"]
+    }
+  ],
+  "allowedSuites": ["ecdsa-sd-2023", "dc+sd-jwt"],
+  "freshness": {
+    "revocationMaxAgeSec": 0,
+    "trustListMaxAgeSec": 900
+  },
+  "decision": {
+    "onAllPass": "Approve",
+    "reviewWhen": ["fraudScore>0.6", "assurance==min"],
+    "declineWhen": ["anyRevoked", "anyExpired", "policyUnmet"]
+  }
+}
+```
+
+<Note>
+  The DCQL credential query sent to the holder's wallet is generated directly from this policy. The wallet shows the holder exactly the fields listed in `requiredClaims` and `optionalClaims` — what you configure and what gets requested cannot drift apart.
+</Note>
+
+## Policy fields
+
+<ParamField body="name" type="string" required>
+  A human-readable label for this policy. Shown in the TrustOS console and audit log.
+</ParamField>
+
+<ParamField body="requiredCredentials" type="array" required>
+  An ordered list of credential requirements. Every entry must be satisfied for the outcome to be `Approve`. See the [requiredCredentials array](#requiredcredentials-array) section below for the full field list.
+</ParamField>
+
+<ParamField body="allowedSuites" type="array" required>
+  The cryptographic proof formats your policy will accept. Valid values include `ecdsa-sd-2023`, `eddsa-rdfc-2022`, `ecdsa-rdfc-2019`, and `dc+sd-jwt`. Credentials presented using a suite not in this list are declined at the issuer trust check.
+</ParamField>
+
+<ParamField body="freshness" type="object">
+  Controls how fresh cached data must be during validation.
+
+  - `revocationMaxAgeSec` — maximum age in seconds for the revocation status cache. Set to `0` to require a live check on every verification.
+  - `trustListMaxAgeSec` — maximum age in seconds for the Trust Registry cache. Set to `900` for a 15-minute freshness window.
+</ParamField>
+
+<ParamField body="decision" type="object" required>
+  Defines how the Decision Engine maps validation outcomes and fraud signals to a result. See the [Decision block](#decision-block) section below.
+</ParamField>
+
+<ParamField body="sharingTemplate" type="string">
+  Optional. The ID of a sharing template that defines the output shape your system receives. If omitted, TrustOS returns the default result shape. See [Sharing templates](#sharing-templates).
+</ParamField>
+
+<ParamField body="computeManifest" type="string">
+  Optional. The ID of a compute manifest that routes resolved claims into a Confidential Compute run. The result includes a `computeOut` field containing only the model's output — raw claims never leave the enclave.
+</ParamField>
+
+## requiredCredentials array
+
+Each entry in `requiredCredentials` describes the conditions one credential type must meet.
+
+<ParamField body="type" type="string" required>
+  The credential type name from the [Credential Library](/platform/credential-library). Examples: `Identity`, `Employment`, `BankKey`, `DriverLicence`.
+</ParamField>
+
+<ParamField body="minAssurance" type="integer" required>
+  The minimum assurance level (0–4) the credential must carry. Presentations where `assuranceLevel < minAssurance` are declined at the policy compliance step.
+</ParamField>
+
+<ParamField body="requiredClaims" type="array" required>
+  Claims the holder must disclose. If any required claim is absent from the presentation, the policy is unmet and the result is `Decline`.
+</ParamField>
+
+<ParamField body="optionalClaims" type="array">
+  Claims the holder may disclose but is not required to. If present in the presentation, they are available for downstream processing. The holder's wallet shows these to the holder alongside required claims.
+</ParamField>
+
+## Decision block
+
+The `decision` block controls how the Decision Engine maps the validation outcome and fraud signals to an `Approve`, `Decline`, or `Review` result.
+
+<ParamField body="onAllPass" type="string" required>
+  The outcome to produce when all `requiredCredentials` requirements are met and no `declineWhen` or `reviewWhen` predicates fire. Typically `"Approve"`.
+</ParamField>
+
+<ParamField body="reviewWhen" type="array">
+  A list of predicates that promote the outcome to `Review` when true. The presentation must have passed all technical checks — `Review` means a human should examine it, not that it failed.
+
+  | Predicate | Meaning |
+  |---|---|
+  | `fraudScore>0.6` | The fraud graph score for this presentation exceeded 0.6 |
+  | `assurance==min` | One or more credentials were presented at exactly the minimum assurance floor |
+</ParamField>
+
+<ParamField body="declineWhen" type="array">
+  A list of predicates that force the outcome to `Decline` when true. Evaluated before `reviewWhen`.
+
+  | Predicate | Meaning |
+  |---|---|
+  | `anyRevoked` | At least one credential in the presentation is revoked |
+  | `anyExpired` | At least one credential is outside its validity window |
+  | `policyUnmet` | The presentation did not satisfy all `requiredCredentials` requirements |
+</ParamField>
+
+## Sharing templates
+
+A sharing template defines the exact output shape your integration receives, decoupling your code from the internal structure of credential claims. Without a template the default result is returned; with one, you receive only the fields you declared.
+
+```json
+{
+  "templateId": "tmpl_affordability_v3",
+  "inputs": [
+    "Employment.payrollVerifiedFlag",
+    "BankKey.accountStanding",
+    "TaxKey.goodStandingFlag"
+  ],
+  "combine": "computeManifest",
+  "output": {
+    "fields": ["affordabilityBand", "proxy"],
+    "format": "json"
+  }
+}
+```
+
+The `combine` value controls how the inputs are processed before the output is returned to you:
+
+| Value | Behaviour |
+|---|---|
+| `raw` | Returns the disclosed claim values directly. Only permitted for specific scheme configurations where raw claim sharing is explicitly allowed. |
+| `derived-flags` | Returns boolean or categorical derivations (e.g. `employedFlag: true`) without exposing the underlying values. |
+| `computeManifest` | Routes the inputs into a Confidential Compute run. You receive only the model's output — the claim values never leave the enclave and are never visible to TrustOS or your system. |
+
+<Tip>
+  Use `combine: computeManifest` for sensitive calculations such as affordability scoring or risk banding. You define the model; TrustOS executes it inside an attested enclave and returns only the result.
+</Tip>
+
+## Policy versioning
+
+Policies are versioned and each version is immutable. When you update a policy, TrustOS creates a new version — the existing version is preserved and continues to be used by any in-flight verifications that were started against it.
+
+```bash
+# List all versions of a policy
+GET /policies/{policyId}/versions
+
+# Retrieve a specific version
+GET /policies/{policyId}/versions/{version}
+```
+
+<Warning>
+  Raising a minimum assurance level or adding a required credential type takes effect only on verifications started after the new version is published. It is never applied retroactively to in-flight transactions.
+</Warning>
+
+All policy changes are recorded in the audit log with a timestamp, the identity of the user who made the change, and a diff of what changed.
+
+<Tip>
+  When creating a new policy, open the Marketplace and find the credential type you want to verify. Most entries include a ready-made draft policy you can import and customise — no need to start from a blank JSON object.
+</Tip>

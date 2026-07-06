@@ -1,0 +1,72 @@
+---
+title: "USSD Verification for Feature Phone Users"
+sidebarTitle: "USSD Channel"
+description: "How TrustOS enables verification on feature phones via USSD — same pipeline, no smartphone required, designed for low-connectivity and inclusion use cases."
+---
+
+TrustOS supports verification on feature phones — no smartphone required — via USSD. When a holder dials a short code, the same verification pipeline runs as it would for a mobile wallet user. Only the presentation channel changes. This channel is designed for government services, financial inclusion programmes, and any other use case that serves populations with limited access to smartphones or reliable mobile data.
+
+## How USSD Verification Works
+
+<Steps>
+  <Step title="Holder Dials the Short Code">
+    The holder dials a USSD short code (for example, `*123#`) on their feature phone. This initiates a USSD session with the gateway.
+  </Step>
+  <Step title="Gateway Identifies the Holder">
+    The USSD Gateway resolves the holder's MSISDN (their phone number) to their TrustOS account and retrieves their associated credentials and custodial key from the platform HSM.
+  </Step>
+  <Step title="Verifier Identity and Fields Are Displayed">
+    The verifier's name and the claims they are requesting are rendered as USSD text menu pages. If the credential list is long, it paginates — every disclosed field is shown across however many pages are needed.
+  </Step>
+  <Step title="Holder Approves with Their PIN">
+    The holder enters their PIN to approve the disclosure. This PIN, combined with their MSISDN-bound factor, unlocks their custodial key for the session.
+  </Step>
+  <Step title="Gateway Constructs and Signs the Presentation">
+    The USSD Gateway builds a Verifiable Presentation and signs it using the holder's custodial HSM key. The resulting VP is identical in format to one produced by a smartphone wallet.
+  </Step>
+  <Step title="Presentation Is Submitted">
+    The signed VP is submitted to the OID4VP engine via `direct_post`, exactly as a smartphone wallet would submit it.
+  </Step>
+  <Step title="Validation Runs Through the Standard Pipeline">
+    TrustOS processes the presentation through the same validation pipeline used for all channels — verifying the holder key binding, credential proof, issuer trust, revocation status, and policy compliance. The backend does not distinguish USSD from app, except for the `channel: ussd` marker recorded in the audit log.
+  </Step>
+</Steps>
+
+## Constraints and Trade-offs
+
+USSD is an inclusion channel with known limitations. Understanding these trade-offs helps you design policies and user journeys that work well for your USSD holders.
+
+<AccordionGroup>
+  <Accordion title="Page length limits">
+    USSD strings are limited to approximately 182 characters per page. If a verifier requests a large number of claims, the disclosure list will paginate across multiple screens. The holder must navigate through all pages before approving — least-disclosure visibility is preserved, but the flow takes longer than on a smartphone.
+  </Accordion>
+  <Accordion title="Custodial key model">
+    Feature phones cannot hold private keys in a secure enclave. For USSD sessions, the holder's key is **custodial** — it is held in the platform's HSM and unlocked per session using the holder's PIN and their MSISDN-bound factor. This is a deliberate, documented security trade-off made in the interest of inclusion. It means the holder places more trust in the platform than a smartphone wallet holder does. The audit record marks `channel: ussd` so this custody model is always visible in the verification context.
+  </Accordion>
+  <Accordion title="No biometric liveness">
+    USSD sessions cannot support biometric liveness checks. As a result, a USSD-originated session has a capped assurance level. Any policy that requires assurance level 3 (which includes biometric liveness) cannot be satisfied via USSD.
+  </Accordion>
+</AccordionGroup>
+
+## Assurance Level Ceiling
+
+<Note>
+  USSD-originated sessions have a capped assurance level. If your policy requires assurance level 3 (biometric liveness), USSD holders will receive a **Decline** result — not because their credentials are invalid, but because the channel cannot meet the assurance requirement.
+
+  Consider running **two separate policies** for the same verification use case: one for app-based users (with higher minimum assurance) and one for USSD users (with a lower minimum assurance appropriate to the channel). This lets you serve both populations without excluding USSD holders from services where the use case tolerates lower assurance.
+</Note>
+
+The `channel: ussd` marker on the audit record preserves full context. Verifiers and compliance teams can always see which sessions used the USSD channel, and the assurance level recorded for each session reflects the channel's actual ceiling.
+
+## Upgrade Path
+
+Holders who begin on USSD are not locked to that channel. If a holder later acquires a smartphone and registers a mobile wallet:
+
+- Their **standing consent records** carry over — they do not need to re-grant consent to verifiers they have previously approved.
+- Their **full audit history** is preserved, including all USSD-originated sessions.
+- Their credentials can be re-issued to their new mobile wallet via the standard OID4VCI renewal flow.
+- Future verifications from the mobile wallet will be eligible for higher assurance levels.
+
+<Tip>
+  If you operate a service that currently accepts USSD verifications, plan for the upgrade path from the start. Make sure your lower-assurance USSD policy and your higher-assurance app policy produce the same outcome record in your system so that holder histories remain coherent after upgrade.
+</Tip>

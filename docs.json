@@ -1,72 +1,97 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mintlify Starter Kit",
+  "name": "TrustOS",
+  "theme": "luma",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#2563EB",
+    "light": "#EFF6FF",
+    "dark": "#1E3A8A"
   },
   "favicon": "/favicon.svg",
   "navigation": {
-    "pages": [
+    "tabs": [
       {
-        "group": "Getting Started",
-        "pages": [
-          "index",
-          "quickstart"
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "core-concepts"
+            ]
+          },
+          {
+            "group": "Platform",
+            "pages": [
+              "platform/verification-flow",
+              "platform/credential-library",
+              "platform/policy-engine",
+              "platform/trust-registry",
+              "platform/decision-engine"
+            ]
+          },
+          {
+            "group": "Wallet & Issuance",
+            "pages": [
+              "wallet/overview",
+              "wallet/holder-consent",
+              "wallet/ussd-channel",
+              "issuance/overview"
+            ]
+          },
+          {
+            "group": "Advanced Features",
+            "pages": [
+              "advanced/confidential-compute",
+              "advanced/fraud-signals",
+              "advanced/audit-monitoring",
+              "advanced/marketplace"
+            ]
+          },
+          {
+            "group": "Integration",
+            "pages": [
+              "integration/verifier-integration",
+              "integration/issuer-integration",
+              "integration/webhooks",
+              "integration/security",
+              "integration/industries"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/overview",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/verifications",
+              "api/policies",
+              "api/consent",
+              "api/compute-manifests",
+              "api/marketplace",
+              "api/audit",
+              "api/webhooks"
+            ]
+          }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://app.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
     ]
   },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+  "navbar": {
+    "primary": {
+      "type": "button",
+      "label": "Get Started",
+      "href": "/quickstart"
     }
   }
 }

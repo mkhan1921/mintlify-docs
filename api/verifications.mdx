@@ -1,0 +1,219 @@
+---
+title: "Verifications API: Start and Retrieve Results"
+sidebarTitle: "Verifications"
+description: "Start a verification event, present credentials to a holder over QR, USSD, or direct post, and poll or receive the structured result."
+---
+
+The Verifications API is the primary entry point for all credential verification activity on TrustOS. You create a verification event by referencing a policy, choose a delivery channel for the holder interaction, and then either poll for the result or receive it asynchronously via webhook. The response never exposes raw credential claim values — only structured outcomes, scores, and an optional compute output.
+
+All requests must be authenticated with mTLS and an OAuth 2.0 client-credentials bearer token scoped to your verifier DID. Every `POST` endpoint accepts an optional `Idempotency-Key` header; replays within the 24-hour window return the original response without creating a duplicate event.
+
+---
+
+## POST /verifications
+
+Start a new verification event. TrustOS creates an OID4VP presentation request, generates the channel-appropriate delivery artifact (QR code, deep link, or USSD session), and returns immediately with a `transactionId` you can use to poll for the result.
+
+### Request body
+
+<ParamField body="policyId" type="string" required>
+  UUID of the policy that governs this verification. The policy must belong to your verifier. The policy version active at request creation is pinned for the lifetime of the event.
+</ParamField>
+
+<ParamField body="channel" type="string" required>
+  Delivery channel for the holder interaction. One of: `qr`, `direct_post`, `cross_device`, `ussd`.
+</ParamField>
+
+<ParamField body="subjectHint" type="object">
+  Optional routing hint used exclusively for `ussd` channel delivery. Provide the holder's mobile number so TrustOS can initiate the USSD session.
+
+  <Expandable title="subjectHint fields">
+    <ParamField body="msisdn" type="string">
+      E.164-formatted mobile number, e.g. `"+27821234567"`.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="sharingTemplate" type="string">
+  Template ID that overrides the default sharing template defined on the policy. The template controls which derived fields are returned to you and how claim inputs are combined.
+</ParamField>
+
+<ParamField body="computeManifest" type="string">
+  Manifest ID that overrides the policy's default compute manifest. The manifest must be registered and bound to your verifier before it can be referenced here.
+</ParamField>
+
+<ParamField body="callback" type="object">
+  Configure asynchronous result delivery. When supplied, TrustOS POSTs the completed result to your registered webhook rather than waiting for you to poll.
+
+  <Expandable title="callback fields">
+    <ParamField body="webhookId" type="string">
+      ID of a registered webhook endpoint. See [Webhooks API](/api/webhooks).
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Example request
+
+```bash
+curl -X POST https://api.trustos.example/v1/verifications \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: your-unique-request-id" \
+  -d '{
+    "policyId": "pol_01JAFFORDABILITY",
+    "channel": "qr",
+    "callback": { "webhookId": "wh_01J..." }
+  }'
+```
+
+### Response — 201 Created
+
+```json
+{
+  "transactionId": "evt_01J...",
+  "status": "awaiting_presentation",
+  "presentation": {
+    "channel": "qr",
+    "requestUri": "https://api.trustos.example/oid4vp/evt_.../request",
+    "qr": "data:image/png;base64,...",
+    "expiresAt": "2026-06-24T10:05:00Z"
+  }
+}
+```
+
+<ResponseField name="transactionId" type="string">
+  Unique identifier for this verification event. Use it to poll `GET /verifications/{id}` or correlate webhook deliveries.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Initial status of the event. Always `awaiting_presentation` on creation.
+</ResponseField>
+
+<ResponseField name="presentation" type="object">
+  Channel-specific artifact the holder uses to respond to the verification request.
+
+  <Expandable title="presentation fields">
+    <ResponseField name="channel" type="string">
+      The channel this event was created on: `qr`, `direct_post`, `cross_device`, or `ussd`.
+    </ResponseField>
+    <ResponseField name="requestUri" type="string">
+      The OID4VP request URI the holder's wallet will fetch to retrieve the presentation definition.
+    </ResponseField>
+    <ResponseField name="qr" type="string">
+      Base64-encoded PNG QR code image. Present on `qr` and `cross_device` channels only.
+    </ResponseField>
+    <ResponseField name="expiresAt" type="string">
+      ISO-8601 timestamp after which the presentation request is no longer valid.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## GET /verifications/{id}
+
+Poll for the current status or final result of a verification event. Call this endpoint after creating a verification if you are not using webhook delivery.
+
+### Path parameters
+
+<ParamField path="id" type="string" required>
+  The `transactionId` returned by `POST /verifications`.
+</ParamField>
+
+### Example request
+
+```bash
+curl https://api.trustos.example/v1/verifications/evt_01J... \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+### Response — 200 OK (completed)
+
+```json
+{
+  "transactionId": "evt_01J...",
+  "status": "completed",
+  "result": {
+    "outcome": "Approve",
+    "riskScore": 0.12,
+    "trustScore": 88,
+    "riskFlags": [],
+    "proxy": "px_9f3...",
+    "computeOut": null,
+    "reasons": ["all required credentials valid and policy met"]
+  },
+  "completedAt": "2026-06-24T10:03:11Z"
+}
+```
+
+<ResponseField name="transactionId" type="string">
+  The unique identifier for this verification event, echoed from the creation response.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Current lifecycle status of the event. See the status table below.
+</ResponseField>
+
+<ResponseField name="result" type="object">
+  Present only when `status` is `completed`, `declined`, or `error`.
+
+  <Expandable title="result fields">
+    <ResponseField name="outcome" type="string">
+      Policy decision: `Approve`, `Decline`, or `Review`.
+    </ResponseField>
+    <ResponseField name="riskScore" type="number">
+      Fraud and risk score between `0.0` (lowest risk) and `1.0` (highest risk).
+    </ResponseField>
+    <ResponseField name="trustScore" type="number">
+      Composite trust score between `0` and `100`.
+    </ResponseField>
+    <ResponseField name="riskFlags" type="array">
+      List of string flags raised during evaluation, e.g. `"fraudScore>0.6"`. Empty when none are raised.
+    </ResponseField>
+    <ResponseField name="proxy" type="string">
+      A pseudonymous, stable identifier for the holder. Use this to correlate repeat interactions without storing PII.
+    </ResponseField>
+    <ResponseField name="computeOut" type="object | null">
+      The output of a confidential compute manifest, if one was configured. `null` when no compute manifest was run. Shape is defined by the manifest's `outputSchema`.
+    </ResponseField>
+    <ResponseField name="reasons" type="array">
+      Human-readable strings explaining the decision.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="completedAt" type="string">
+  ISO-8601 timestamp of when the verification reached a terminal state.
+</ResponseField>
+
+### Status values
+
+| Status | Description |
+|---|---|
+| `awaiting_presentation` | The OID4VP request has been delivered; waiting for the holder to respond. |
+| `completed` | The holder presented credentials and a decision was reached. Check `result.outcome`. |
+| `declined` | The presentation was declined by the policy engine or the holder aborted. |
+| `expired` | The presentation window closed before the holder responded. |
+| `error` | An unexpected error occurred during processing. Retry or contact support with the `traceId`. |
+
+<Note>
+  The result never contains raw credential claim values. TrustOS returns only derived outcomes, scores, and compute outputs — your integration code should never expect or store raw claims.
+</Note>
+
+---
+
+## Error responses
+
+All errors follow [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) `application/problem+json`. Every problem response includes a `traceId` you can share with support.
+
+| HTTP | `type` | When |
+|---|---|---|
+| 400 | `invalid-request` | Malformed body or schema violation |
+| 401 | `unauthenticated` | Missing or invalid mTLS / bearer token |
+| 403 | `verifier-not-approved` | Verifier is not approved in the Trust Registry |
+| 404 | `not-found` | Unknown `transactionId` or `policyId` |
+| 409 | `conflict` | `Idempotency-Key` replay with a different request body |
+| 410 | `presentation-expired` | OID4VP session expired before the holder responded |
+| 422 | `policy-unsatisfiable` | Policy references an unknown credential type or manifest |
+| 429 | `rate-limited` | Per-verifier quota exceeded. Respect the `Retry-After` header. |
+| 502/504 | `dependency-failure` | Upstream dependency unavailable and cache is stale |
