@@ -1,5 +1,5 @@
 ---
-title: "Configure Verification Policies in TrustOS"
+title: "Define and Manage Verification Policies in TrustOS"
 sidebarTitle: "Policy Engine"
 description: "Learn how to define policies that control which credentials, assurance levels, and claims a verification must satisfy to produce an outcome."
 ---
@@ -13,6 +13,8 @@ The following example shows a policy for an unsecured personal loan affordabilit
 ```json
 {
   "policyId": "uuid",
+  "verifierDid": "did:web:lender.example",
+  "scheme": "za-lending-v1",
   "name": "Unsecured personal loan — affordability",
   "requiredCredentials": [
     {
@@ -37,16 +39,20 @@ The following example shows a policy for an unsecured personal loan affordabilit
       "requiredClaims": ["goodStandingFlag", "taxStatus"]
     }
   ],
-  "allowedSuites": ["ecdsa-sd-2023", "dc+sd-jwt"],
+  "allowedSuites": ["ecdsa-sd-2023", "eddsa-rdfc-2022", "dc+sd-jwt"],
   "freshness": {
     "revocationMaxAgeSec": 0,
     "trustListMaxAgeSec": 900
   },
+  "sharingTemplate": "tmpl_affordability_v3",
+  "computeManifest": "mft_lender_affordability",
   "decision": {
     "onAllPass": "Approve",
     "reviewWhen": ["fraudScore>0.6", "assurance==min"],
     "declineWhen": ["anyRevoked", "anyExpired", "policyUnmet"]
-  }
+  },
+  "version": 3,
+  "validFrom": "2026-06-01T00:00:00Z"
 }
 ```
 
@@ -55,6 +61,14 @@ The following example shows a policy for an unsecured personal loan affordabilit
 </Note>
 
 ## Policy fields
+
+<ParamField body="verifierDid" type="string" required>
+  The `did:web` identifier of the verifier that owns this policy. Must match the authenticated caller's registered verifier DID.
+</ParamField>
+
+<ParamField body="scheme" type="string" required>
+  The verification scheme this policy operates under (e.g. `za-lending-v1`, `za-banking-v1`). The scheme determines which Trust Registry list applies and what the minimum assurance and cryptographic suite requirements are.
+</ParamField>
 
 <ParamField body="name" type="string" required>
   A human-readable label for this policy. Shown in the TrustOS console and audit log.
@@ -165,6 +179,32 @@ The `combine` value controls how the inputs are processed before the output is r
 <Tip>
   Use `combine: computeManifest` for sensitive calculations such as affordability scoring or risk banding. You define the model; TrustOS executes it inside an attested enclave and returns only the result.
 </Tip>
+
+## Creating a policy
+
+Send a `POST /policies` request with the policy JSON to create a new policy. TrustOS validates the shape, links it to your verifier DID, and returns the assigned `policyId` and initial `version` number.
+
+```bash
+POST /policies
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{
+  "verifierDid": "did:web:lender.example",
+  "scheme": "za-lending-v1",
+  "name": "Unsecured personal loan — affordability",
+  "requiredCredentials": [...],
+  "allowedSuites": ["ecdsa-sd-2023", "eddsa-rdfc-2022", "dc+sd-jwt"],
+  "freshness": { "revocationMaxAgeSec": 0, "trustListMaxAgeSec": 900 },
+  "decision": {
+    "onAllPass": "Approve",
+    "reviewWhen": ["fraudScore>0.6", "assurance==min"],
+    "declineWhen": ["anyRevoked", "anyExpired", "policyUnmet"]
+  }
+}
+```
+
+A successful `201 Created` response returns the full policy object including the server-assigned `policyId` and `version: 1`. Use the `policyId` in subsequent `POST /verifications` requests to trigger verifications against this policy.
 
 ## Policy versioning
 

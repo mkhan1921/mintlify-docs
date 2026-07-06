@@ -97,18 +97,19 @@ This guide walks you through everything you need to make your first TrustOS veri
 
     ```json
     {
-      "transactionId": "evt_01J...",
-      "status": "awaiting_presentation",
-      "presentation": {
+      "requestId": "evt_01J...",
+      "status": "pending",
+      "channelEnvelope": {
         "channel": "qr",
-        "requestUri": "https://api.trustos.example/oid4vp/evt_.../request",
-        "qr": "data:image/png;base64,...",
-        "expiresAt": "2026-06-24T10:05:00Z"
+        "requestId": "evt_01J...",
+        "nonce": "abc123...",
+        "payload": "openid4vp://authorize?request_id=evt_01J...&nonce=abc123...&response_mode=direct_post",
+        "consentPrompt": "Verifier acme-corp requests: Identity (assurance 2, claims: fullName, idNumber). Share these details?"
       }
     }
     ```
 
-    Render the `qr` data URI as an `<img>` in your UI (or pass `channel: "direct_post"` for mobile deep-link flows). The holder opens their wallet, scans the QR code, reviews the exact claims your policy is requesting, and approves the presentation. Their wallet sends the cryptographic proof directly to TrustOS — your server never handles the credential data.
+    Encode the `payload` value as a QR code and display it in your UI (or pass `"channel": "direct_post"` for mobile deep-link flows, where you present `payload` as a clickable link). The holder opens their wallet, scans the QR code, reviews the exact claims your policy is requesting, and approves the presentation. Their wallet sends the cryptographic proof directly to TrustOS — your server never handles the credential data.
 
     <Note>
       The `holderRef` field is your stable, pseudonymous reference for this user in your system. TrustOS uses it to bind the presentation back to the correct verification session and returns a `proxy` identifier in the result that you can store for repeat interactions.
@@ -130,21 +131,20 @@ This guide walks you through everything you need to make your first TrustOS veri
 
     ```json
     {
-      "transactionId": "evt_01J...",
+      "requestId": "evt_01J...",
       "status": "completed",
-      "result": {
-        "outcome": "Approve",
-        "riskScore": 0.08,
-        "trustScore": 92,
-        "riskFlags": [],
-        "proxy": "px_9f3...",
-        "reasons": ["all required credentials valid and policy met"]
-      },
-      "completedAt": "2026-06-24T10:03:11Z"
+      "decision": "Approve",
+      "riskScore": 0.08,
+      "trustScore": 92,
+      "riskFlags": [],
+      "proxy": "px_9f3...",
+      "reasons": ["ok"],
+      "policyId": "pol_01J...",
+      "policyVersion": 1
     }
     ```
 
-    Use `outcome` to drive your application logic — continue an onboarding flow on `Approve`, block on `Decline`, or route to a manual review queue on `Review`. Store `proxy` if you want to recognise this holder in future sessions without any PII. The `riskScore` and `trustScore` are available for audit or reporting purposes.
+    Use `decision` to drive your application logic — continue an onboarding flow on `Approve`, block on `Decline`, or route to a manual review queue on `Review`. Store `proxy` if you want to recognise this holder in future sessions without any PII. The `riskScore` and `trustScore` are available for audit or reporting purposes.
 
     <Note>
       The result never contains raw credential data. Claim values such as `fullName` or `idNumber` are not present anywhere in the response — only the outcome, scores, flags, and proxy reach your application. This is enforced by the platform, not a configuration choice.

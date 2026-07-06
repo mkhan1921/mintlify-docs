@@ -1,12 +1,12 @@
 ---
-title: "Compute Manifests API: Register Private Models"
+title: "TrustOS Compute Manifests API: Register Private Models"
 sidebarTitle: "Compute Manifests"
 description: "Register and inspect compute manifests that define the artifact, inputs, output schema, and resource limits for confidential compute runs."
 ---
 
 A compute manifest is the contract that governs what runs inside TrustOS's confidential compute layer. It specifies the exact artifact (WASM module, ML model, or script) you want executed against resolved credential claims, the claim paths that serve as inputs, the JSON Schema the output must conform to, and the runtime resource bounds. Before TrustOS will execute any computation, the artifact hash and verifier signature in the manifest must pass validation.
 
-The platform executes manifests inside an attested hardware enclave or a Firecracker microVM — the raw claim values never leave the sandbox, and the verifier never receives anything beyond the declared output. This is the mechanism that lets you run proprietary scoring logic without exposing your model to the platform, and without receiving raw holder data in return.
+The platform executes manifests inside an attested hardware enclave or an isolated sandbox — the raw claim values never leave the secure execution environment, and the verifier never receives anything beyond the declared output. This is the mechanism that lets you run proprietary scoring logic without exposing your model to the platform, and without receiving raw holder data in return.
 
 ---
 
@@ -33,8 +33,8 @@ Register a new compute manifest. TrustOS validates the artifact signature, confi
     <ParamField body="signature" type="string" required>
       Base64-encoded signature over the artifact, produced with your verifier's registered signing key.
     </ParamField>
-    <ParamField body="runtime" type="string" required>
-      The execution environment. Use `"nitro"` for ML models and artifacts requiring hardware attestation, or `"microvm-wasmtime"` for lightweight WASM scripts.
+    <ParamField body="runtime" type="string">
+      Optional hint for the execution environment class. Contact TrustOS support for the values applicable to your account tier. When omitted, the platform selects the appropriate execution environment based on the `kind` field.
     </ParamField>
   </Expandable>
 </ParamField>
@@ -71,8 +71,7 @@ curl -X POST https://api.trustos.example/v1/compute-manifests \
     "artifact": {
       "kind": "wasm",
       "hash": "sha256-abc123...",
-      "signature": "base64encodedSignature==",
-      "runtime": "nitro"
+      "signature": "base64encodedSignature=="
     },
     "inputs": [
       "Employment.payrollVerifiedFlag",
@@ -103,8 +102,7 @@ curl -X POST https://api.trustos.example/v1/compute-manifests \
   "artifact": {
     "kind": "wasm",
     "hash": "sha256-abc123...",
-    "signature": "base64encodedSignature==",
-    "runtime": "nitro"
+    "signature": "base64encodedSignature=="
   },
   "inputs": [
     "Employment.payrollVerifiedFlag",
@@ -163,8 +161,7 @@ curl https://api.trustos.example/v1/compute-manifests/mft_lender_affordability \
   "artifact": {
     "kind": "wasm",
     "hash": "sha256-abc123...",
-    "signature": "base64encodedSignature==",
-    "runtime": "nitro"
+    "signature": "base64encodedSignature=="
   },
   "inputs": [
     "Employment.payrollVerifiedFlag",

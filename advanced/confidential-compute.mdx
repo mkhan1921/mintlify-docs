@@ -1,5 +1,5 @@
 ---
-title: "Run Private Models on Verified Data with TrustOS"
+title: "Confidential Compute: Run Private Models on Verified Data"
 sidebarTitle: "Confidential Compute"
 description: "Run proprietary models on verified credential data without exposing your logic to holders or TrustOS — only the output is returned."
 ---
@@ -44,13 +44,16 @@ Every submission is governed by a compute manifest you register with TrustOS. Th
     "Employment.payrollVerifiedFlag",
     "BankKey.accountStanding"
   ],
-  "outputSchema": {
-    "affordabilityBand": "enum[low,medium,high]"
+  "output": {
+    "schema": { "affordabilityBand": "enum[low,medium,high]" },
+    "maxBytes": 4096
   },
-  "resourceBounds": {
-    "maxCpuMs": 500,
-    "maxMemMb": 64
-  }
+  "bounds": {
+    "cpuMs": 500,
+    "memMb": 64,
+    "timeoutSec": 5
+  },
+  "retainModel": false
 }
 ```
 
@@ -70,8 +73,9 @@ The `inputs` array specifies which credential claim paths are marshalled into th
         "manifestId": "mft_lender_affordability",
         "artifact": { "kind": "wasm", "hash": "sha256-...", "signature": "...", "runtime": "nitro" },
         "inputs": ["Employment.payrollVerifiedFlag", "BankKey.accountStanding"],
-        "outputSchema": { "affordabilityBand": "enum[low,medium,high]" },
-        "resourceBounds": { "maxCpuMs": 500, "maxMemMb": 64 }
+        "output": { "schema": { "affordabilityBand": "enum[low,medium,high]" }, "maxBytes": 4096 },
+        "bounds": { "cpuMs": 500, "memMb": 64, "timeoutSec": 5 },
+        "retainModel": false
       }'
     ```
   </Step>
@@ -130,10 +134,10 @@ Your manifest's `outputSchema` is not advisory — it is enforced. TrustOS valid
 TrustOS selects the execution runtime based on the `runtime` field in your manifest's artifact declaration.
 
 <CardGroup cols={2}>
-  <Card title="Nitro Enclaves" icon="shield-halved">
-    The default for signed ML models and any submission where you need cryptographic proof of which code ran. Hardware attestation ensures your model is decryptable only by the exact approved enclave image — not by a compromised operator or any code running outside the enclave.
+  <Card title="Hardware-Attested Enclave" icon="shield-halved">
+    The default for signed ML models and any submission where you need cryptographic proof of which code ran. Hardware attestation ensures your model is decryptable only by the exact approved enclave image — not by a compromised operator or any code running outside the isolated sandbox.
   </Card>
-  <Card title="Lambda MicroVM (wasmtime)" icon="bolt">
+  <Card title="Isolated Sandbox (WASM)" icon="bolt">
     Used for lightweight WASM scripts and calculation modules that do not require full hardware attestation. Faster cold-start, deterministic execution, and strict CPU, memory, and time bounds enforced by the WebAssembly runtime.
   </Card>
 </CardGroup>

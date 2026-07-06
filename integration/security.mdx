@@ -1,5 +1,5 @@
 ---
-title: "Security Requirements for TrustOS Integrations"
+title: "Security Requirements for TrustOS API Integrations"
 sidebarTitle: "Security"
 description: "Authentication requirements, TLS standards, idempotency rules, error codes, rate limiting, and data-handling obligations for TrustOS integrations."
 ---
@@ -39,7 +39,7 @@ Build token refresh into your client from the start. Tokens expire and a stale t
 
 ## TLS Requirements
 
-TrustOS enforces **TLS 1.3 minimum** on all external connections. TLS 1.2 is disabled at the load balancer and CDN layer. If your HTTP client or network proxy does not support TLS 1.3, upgrade it before integrating.
+Your integration must use **TLS 1.3** for all connections to TrustOS. TLS 1.2 is not accepted. If your HTTP client or network proxy does not support TLS 1.3, upgrade it before integrating.
 
 <Note>
   This applies to connections **you make to TrustOS** and to connections **TrustOS makes to you** (webhook delivery). Ensure your webhook endpoint also accepts TLS 1.3 connections.

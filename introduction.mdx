@@ -26,7 +26,7 @@ Every completed verification returns one of three outcomes along with supporting
 
 | Field | Description |
 |---|---|
-| `outcome` | `Approve`, `Decline`, or `Review` — the decision your policy produced. |
+| `decision` | `Approve`, `Decline`, or `Review` — the decision your policy produced. |
 | `riskScore` | A float from `0.0` (no risk signals) to `1.0` (high risk) drawn from the fraud graph and validation pipeline. |
 | `trustScore` | An integer from `0` to `100` reflecting how strongly you can trust the issuer and the credential chain. |
 | `riskFlags` | A list of named signals that contributed to the risk score, such as known fraud patterns or anomalous presentation behavior. |
@@ -59,7 +59,7 @@ TrustOS is built to be policy-driven, so the same verification pipeline serves m
 </CardGroup>
 
 <Note>
-  **Privacy-first by design.** Raw credential claim values exist only in memory during a single verification event and are discarded the moment it completes. TrustOS never writes raw claims to any durable store — not a database, not a log. What reaches your application is the decision, scores, and a pseudonymous proxy identifier. This is not a configuration option; it is enforced in the platform's code and audit schema.
+  **Privacy-first by design.** Raw credential claim values exist only in memory during a single verification event and are discarded the moment it completes. TrustOS never writes raw claims to any durable store — not a database, not a log. What reaches your application is the decision, scores, and a pseudonymous proxy identifier. This is not a configuration option; it is enforced in the platform's code.
 </Note>
 
 ## Explore TrustOS

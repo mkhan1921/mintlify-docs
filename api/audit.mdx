@@ -1,12 +1,12 @@
 ---
-title: "Audit API: Query Verification Event History"
+title: "TrustOS Audit API: Query Verification Event History"
 sidebarTitle: "Audit"
 description: "Query the immutable, verifier-scoped audit log for verification outcomes, consent changes, and policy updates with cursor-based pagination."
 ---
 
 The Audit API gives you a queryable projection of the immutable audit log scoped to your verifier. Every verification outcome, consent grant or revocation, policy creation, and policy update generates an audit event. You can use this API to build compliance reports, investigate unusual patterns, and answer questions such as "who requested what, when, and why" — the core accountability questions required by data-protection regulations.
 
-The audit log is append-only and backed by WORM object storage with a default 7-year retention period. The records returned by this API are a fast queryable projection; the underlying immutable stream is always the authoritative source of truth. All events contain claim names and pseudonymous identifiers — raw claim values are never logged anywhere in the platform.
+The audit log is append-only and immutable with a default 7-year retention period. The records returned by this API are a queryable projection; the underlying immutable stream is always the authoritative source of truth. All events contain claim names and pseudonymous identifiers — raw claim values are never logged anywhere in the platform.
 
 ---
 

@@ -1,5 +1,5 @@
 ---
-title: "TrustOS REST API Reference Overview"
+title: "TrustOS REST API — Reference Overview and Conventions"
 sidebarTitle: "API Overview"
 description: "Complete reference for the TrustOS JSON-over-HTTPS REST API — resources, conventions, versioning, idempotency, and pagination in one place."
 ---
@@ -67,7 +67,7 @@ curl -X POST https://api.trustos.example/v1/verifications \
   -H 'Authorization: Bearer $TOKEN' \
   -H 'Idempotency-Key: a8098c1a-f86e-11da-bd1a-00112444be1e' \
   -H 'Content-Type: application/json' \
-  -d '{"policyId": "pol_01J...", "channel": "qr"}'
+  -d '{"policyId": "pol_01J...", "holderRef": "holder_7f2a9c", "channel": "qr"}'
 ```
 
 If the same `Idempotency-Key` is replayed within 24 hours but with a **different** body, the API returns `409 conflict`.

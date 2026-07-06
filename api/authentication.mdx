@@ -1,7 +1,7 @@
 ---
-title: "Authenticate with the TrustOS API"
+title: "TrustOS API Authentication: mTLS and OAuth 2.0 Guide"
 sidebarTitle: "Authentication"
-description: "Set up mTLS client certificates and OAuth 2.0 bearer tokens to make authenticated calls to the TrustOS REST API from your server."
+description: "Set up mTLS client certificates and OAuth 2.0 bearer tokens to make authenticated calls to the TrustOS REST API from your server-side application."
 ---
 
 TrustOS uses two-layer authentication: an mTLS client certificate issued at verifier registration, combined with an OAuth 2.0 bearer token obtained via the client credentials flow. Both layers must be present on every request to the API. The certificate binds the request to your registered verifier identity, and the bearer token scopes the request to specific API permissions.
@@ -71,7 +71,7 @@ curl -X POST https://api.trustos.example/v1/verifications \
   --cert client.crt --key client.key \
   -H 'Authorization: Bearer eyJhbGciOiJSUzI1NiJ9...' \
   -H 'Content-Type: application/json' \
-  -d '{"policyId": "pol_01J...", "channel": "qr"}'
+  -d '{"policyId": "pol_01J...", "holderRef": "holder_7f2a9c", "channel": "qr"}'
 ```
 
 </Steps>
@@ -162,6 +162,7 @@ const token = await getAccessToken(
 
 const response = await callApi('/verifications', token, {
   policyId: 'pol_01J...',
+  holderRef: 'holder_7f2a9c',
   channel: 'qr',
 });
 ```

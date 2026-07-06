@@ -49,7 +49,7 @@ When TrustOS completes a verification, it returns a single structured result. Th
 
 | Field | Type | Description |
 |---|---|---|
-| `outcome` | string | The decision produced by your policy: `Approve`, `Decline`, or `Review`. |
+| `decision` | string | The decision produced by your policy: `Approve`, `Decline`, or `Review`. |
 | `riskScore` | float | A value between `0.0` (no risk signals) and `1.0` (high risk), derived from fraud-graph signals, device patterns, and credential anomalies. |
 | `trustScore` | integer | A value between `0` and `100` reflecting the strength of the issuer chain and credential evidence. Higher is more trustworthy. |
 | `riskFlags` | array | Named signals that contributed to the risk score — for example, patterns associated with known fraud rings or anomalous presentation behaviour. |
@@ -58,7 +58,7 @@ When TrustOS completes a verification, it returns a single structured result. Th
 | `reasons` | array | Human-readable strings explaining the decision, suitable for display in a case management workflow. |
 
 <Note>
-  Raw credential claim values — names, ID numbers, salary figures, dates of birth — are **never** present in the result. The result schema has no field for raw claims, by design. If your application receives a result and needs to store something, store `outcome`, `riskScore`, `trustScore`, `proxy`, and `computeOut`. Never attempt to reconstruct or cache raw claim data.
+  Raw credential claim values — names, ID numbers, salary figures, dates of birth — are **never** present in the result. The result schema has no field for raw claims, by design. If your application receives a result and needs to store something, store `decision`, `riskScore`, `trustScore`, `proxy`, and `computeOut`. Never attempt to reconstruct or cache raw claim data.
 </Note>
 
 ---

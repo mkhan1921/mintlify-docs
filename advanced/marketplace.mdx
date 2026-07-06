@@ -25,9 +25,11 @@ A credential type entry gives you everything you need to evaluate whether a cred
 
 ```json
 {
+  "entryId": "uuid",
   "kind": "credentialType",
   "type": "Employment",
   "schemaUrl": "https://trustos.example/schemas/employment/v1.json",
+  "contextUrl": "https://trustos.example/contexts/employment/v1",
   "issuerDid": "did:web:payrollco.example",
   "trustRegistryStatus": "approved",
   "issuerTrustScore": 91,
@@ -37,7 +39,8 @@ A credential type entry gives you everything you need to evaluate whether a cred
     { "path": "activeStatus", "proves": "currently employed" },
     { "path": "payrollVerifiedFlag", "proves": "income source payroll-verified" }
   ],
-  "revocationEndpoint": "https://payrollco.example/status/"
+  "revocationEndpoint": "https://payrollco.example/status/",
+  "computeTemplates": ["tmpl_income_band"]
 }
 ```
 
@@ -51,11 +54,13 @@ A compute template entry describes a reusable scoring or income-banding computat
 
 ```json
 {
+  "entryId": "uuid",
   "kind": "computeTemplate",
   "templateId": "tmpl_income_band",
   "purpose": "Map verified employment and bank standing to an income band",
   "inputs": ["Employment.payrollVerifiedFlag", "BankKey.accountStanding"],
   "outputSchema": { "band": "enum[low,medium,high]" },
+  "computeManifestRef": "mft_income_band_v2",
   "publisherDid": "did:web:scoringco.example"
 }
 ```

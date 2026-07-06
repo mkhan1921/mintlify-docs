@@ -1,5 +1,5 @@
 ---
-title: "Holder Consent and Privacy Controls in TrustOS"
+title: "Holder Consent and Privacy Controls in TrustOS Wallet"
 sidebarTitle: "Holder Consent"
 description: "Understand how TrustOS consent works — per-presentation and standing modes, what is recorded, how to view your audit trail, and how to revoke at any time."
 ---
@@ -36,7 +36,8 @@ When you grant consent, TrustOS creates a record that captures your decision. He
   "grantedAt": "2026-06-01T10:00:00Z",
   "expiresAt": "2027-06-01T10:00:00Z",
   "revokedAt": null,
-  "channel": "app"
+  "channel": "app",
+  "linkedEvents": ["evt_01J..."]
 }
 ```
 
@@ -55,6 +56,7 @@ Key fields you will see in the record:
 | `expiresAt` | Optional automatic expiry date for standing consent — after this date the grant is no longer valid |
 | `revokedAt` | Populated when you revoke; `null` means the grant is still active |
 | `channel` | Whether you approved via the mobile app (`app`) or USSD (`ussd`) |
+| `linkedEvents` | IDs of the verification events that relied on this consent grant |
 
 ## Consent Operations
 

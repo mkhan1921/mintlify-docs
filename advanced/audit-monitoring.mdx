@@ -1,5 +1,5 @@
 ---
-title: "Audit Trail and Lifecycle Monitoring in TrustOS"
+title: "Immutable Audit Trail and Lifecycle Monitoring in TrustOS"
 sidebarTitle: "Audit & Monitoring"
 description: "Query TrustOS's immutable audit trail and configure lifecycle monitoring to watch for credential expiry, revocation, and status changes."
 ---
@@ -29,15 +29,15 @@ The audit trail uses three independent mechanisms to ensure records cannot be al
   <Card title="Hash chaining" icon="link">
     Each event record includes the SHA-256 hash of the previous record. Any retroactive edit breaks the chain and is immediately detectable.
   </Card>
-  <Card title="Object Lock (Compliance mode)" icon="lock">
-    Audit records are written to object storage with a Compliance-mode lock. No one — including administrators — can delete or overwrite a record until the retention period expires.
+  <Card title="Compliance-mode write lock" icon="lock">
+    Audit records are written to immutable storage with a compliance-mode lock. No one — including administrators — can delete or overwrite a record until the retention period expires.
   </Card>
   <Card title="Daily checkpoint" icon="calendar-check">
     A daily process publishes the current chain-head hash as a tamper-evidence anchor. Even within the retention window, any retroactive edit produces a detectable mismatch against the published checkpoint.
   </Card>
 </CardGroup>
 
-The default retention period is **7 years**, configurable per scheme or regulatory requirement via the Object Lock retention setting.
+The default retention period is **7 years**, configurable per scheme or regulatory requirement.
 
 ## Querying the Audit Log
 
@@ -118,4 +118,4 @@ Lifecycle monitoring watches for changes to credentials and issuers that may aff
 
 ## Retention
 
-The default audit retention period is 7 years. Your scheme administrator can configure a different retention period — for example to match a specific regulatory requirement — by adjusting the Object Lock retention setting. Once set, the retention period cannot be shortened: records are guaranteed to exist and be unmodified for the full period.
+The default audit retention period is 7 years. Your scheme administrator can configure a different retention period — for example to match a specific regulatory requirement. Once set, the retention period cannot be shortened: records are guaranteed to exist and be unmodified for the full period.

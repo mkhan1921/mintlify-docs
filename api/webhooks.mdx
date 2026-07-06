@@ -1,7 +1,7 @@
 ---
-title: "Webhooks API: Manage Result Delivery Endpoints"
+title: "TrustOS Webhooks API: Register Result Delivery Endpoints"
 sidebarTitle: "Webhooks"
-description: "Register, list, and remove HTTPS endpoints that receive signed verification results and lifecycle events without polling."
+description: "Register, list, and remove HTTPS endpoints that receive signed verification results and lifecycle events without polling the API each time."
 ---
 
 Webhooks are the preferred way to receive verification results and lifecycle events on TrustOS. Instead of polling `GET /verifications/{id}`, you register an HTTPS endpoint and TrustOS POSTs a signed JSON payload to it as soon as a verification reaches a terminal state. The delivery system is backed by an event queue with automatic retries and exponential backoff, so transient failures on your end do not result in missed events.

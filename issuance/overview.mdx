@@ -1,5 +1,5 @@
 ---
-title: "Issuing Verifiable Credentials with TrustOS"
+title: "Issuing Verifiable Credentials via TrustOS OID4VCI"
 sidebarTitle: "Issuance"
 description: "How approved issuers — banks, employers, government authorities, and certification bodies — issue W3C Verifiable Credentials via TrustOS OID4VCI."
 ---
@@ -61,7 +61,7 @@ Once registered, you issue credentials using the OID4VCI 1.0 protocol. The flow 
     The wallet constructs a proof JWT bound to the `c_nonce` returned by the token endpoint. This proves that the holder controls the private key corresponding to the DID that will be the credential subject.
   </Step>
   <Step title="TrustOS signs and issues the credential">
-    TrustOS validates the proof JWT, signs the credential using your KMS-backed issuer key, and returns the signed credential to the wallet. Your private key never enters application memory — all signing is delegated to the KMS.
+    TrustOS validates the proof JWT, signs the credential using your issuer key stored in secure key management infrastructure, and returns the signed credential to the wallet. Your private key never enters application memory — all signing operations are performed inside the secure key store.
   </Step>
   <Step title="Credential is delivered to the wallet">
     The wallet stores the signed credential in secure storage. The credential carries a `credentialStatus` entry pointing to your Bitstring Status List so that verifiers can check revocation at any future presentation.
